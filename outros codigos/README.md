@@ -1,0 +1,2 @@
+- Transformador dadobruto openbci.py pega os dados em EDF e transforma-os para CSV, no formato de leitura do OpenBCI.
+- add_zeros.py adiciona zeros nos primeiros segundos em dado em CSV. Para usá-lo, você tem que tirar o cabeçalho do dado antes.
