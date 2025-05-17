@@ -15,7 +15,7 @@ def pegar_acao(edf,acao):
         raise ValueError(f'Dado: {data}')
     return data
 
-dataset_dir = r'C:\Users\LaBios - BCI\Documents\eeg-motor-movementimagery-dataset-1.0.0\files'
+dataset_dir = r'F:\eeg-motor-movementimagery-dataset-1.0.0\files'
 
 acoes = ['T0','T1','T2']
 
@@ -39,7 +39,7 @@ for ind in os.listdir(dataset_dir):
                 case 'T1': T1l.append(data)
                 case 'T2': T2l.append(data)
 
-saida = r'C:\Users\LaBios - BCI\Documents'
+saida = r'C:\Users\Enenon\Documents\GitHub\bci'
 
 T0l = np.concatenate(T0l,axis=-1)
 T1l = np.concatenate(T1l,axis=-1)
