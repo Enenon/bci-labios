@@ -6,8 +6,9 @@ import os
 canais = ['C3..', 'C4..', 'Fp1.', 'Fp2.', 'F7..', 'F3..', 'F4..', 'F8..','T7..', 'T8..', 'P7..', 'P3..', 'P4..', 'P8..', 'O1..', 'O2..']
 def pegar_acao(edf,acao):
     # acao = T0, T1 ou T2
+    var = mne.events_from_annotations(edf)
     indice = mne.events_from_annotations(edf)[1][acao]
-    data = mne.Epochs(edf,mne.events_from_annotations(edf)[0],indice).get_data()
+    data = mne.Epochs(raw=edf,events=mne.events_from_annotations(edf)[0],event_id=indice,tmin=0.0,tmax=4,baseline=(None,None)).get_data()
     #junta tudo
     try:
         data = np.concatenate(data,axis=-1)
@@ -15,7 +16,7 @@ def pegar_acao(edf,acao):
         raise ValueError(f'Dado: {data}')
     return data
 
-dataset_dir = r'F:\eeg-motor-movementimagery-dataset-1.0.0\files'
+dataset_dir = r'c:\Users\LaBios - BCI\Documents\eeg-motor-movementimagery-dataset-1.0.0\files'
 
 acoes = ['T0','T1','T2']
 
@@ -39,7 +40,7 @@ for ind in os.listdir(dataset_dir):
                 case 'T1': T1l.append(data)
                 case 'T2': T2l.append(data)
 
-saida = r'C:\Users\Enenon\Documents\GitHub\bci'
+saida = r'../bci'
 
 T0l = np.concatenate(T0l,axis=-1)
 T1l = np.concatenate(T1l,axis=-1)
