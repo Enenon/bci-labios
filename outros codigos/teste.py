@@ -50,4 +50,4 @@ with np.load(r'C:\Users\LaBios - BCI\Documents\GitHub\bci\x fernando.npz') as xx
 
 dado = x[0]
 
-print(corrPearson(dado)-randomThreshold(dado))
+print(randomThreshold(dado))
