@@ -35,19 +35,31 @@ def corrPearson(matriz):
             m[x,y] = round(sum((xx)*(yy))/(np.sqrt(sum(xx*xx)) * np.sqrt(sum(yy*yy))),3)
     return m
 
-def randomThreshold(matriz):
+def randomThreshold(corr,matriz):
     smatriz = matriz.copy() # por causa da falta desse .copy() eu tava tendo meio mundo de dor de cabeça
     for i in range(len(smatriz[0])):
         smatriz[:,i] = np.random.permutation(smatriz[:,i])
-    return corrPearson(smatriz)
+    return corr(smatriz)
+
+def rede(corr,threshold,matriz):
+    rnd = threshold(corr,matriz)
+    # tirando os 1 da diagonal
+    for i in range(len(rnd)): rnd[i,i] = 0
+    maxim = rnd.max()
+    rmatriz = np.array([[i if i > maxim else 0 for i in j] for j in corr(matriz)])
+    return rmatriz
+
+    
 
 import numpy as np
 data_dir = '../'
 
-with np.load(r'C:\Users\LaBios - BCI\Documents\GitHub\bci\x fernando.npz') as xx:
+with np.load(r'C:\Users\Enenon\Documents\GitHub\bci\T1l.npz') as xx:
     for item in xx.files:
         x = xx[item]
 
-dado = x[0]
+dado = x[:,:721].transpose()
 
-print(randomThreshold(dado))
+print(rede(corrPearson,randomThreshold,dado))
+
+
