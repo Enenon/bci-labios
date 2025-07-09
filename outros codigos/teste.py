@@ -41,25 +41,30 @@ def randomThreshold(corr,matriz):
         smatriz[:,i] = np.random.permutation(smatriz[:,i])
     return corr(smatriz)
 
-def rede(corr,threshold,matriz):
-    rnd = threshold(corr,matriz)
-    # tirando os 1 da diagonal
-    for i in range(len(rnd)): rnd[i,i] = 0
-    maxim = rnd.max()
-    rmatriz = np.array([[i if i > maxim else 0 for i in j] for j in corr(matriz)])
-    return rmatriz
+def rede(corr,threshold,matriz,intervalos=100):
+    REAl = []
+    for n in range(int(len(matriz)/intervalos)):
+        m = matriz[n*intervalos:(n+1)*intervalos]
+        rnd = threshold(corr,m)
+        # tirando os 1 da diagonal
+        for i in range(len(rnd)): rnd[i,i] = 0
+        maxim = rnd.max()
+        rmatriz = np.array([[i if i > maxim else 0 for i in j] for j in corr(matriz)])
+        REAl.append(rmatriz)
+    return sum(np.array(REAl))
 
     
 
 import numpy as np
 data_dir = '../'
 
-with np.load(r'C:\Users\Enenon\Documents\GitHub\bci\T1l.npz') as xx:
+with np.load(r'C:\Users\LaBios - BCI\Documents\GitHub\bci\T1l.npz') as xx:
     for item in xx.files:
         x = xx[item]
 
 dado = x[:,:721].transpose()
+print(dado.shape)
 
-print(rede(corrPearson,randomThreshold,dado))
+#print(rede(corrPearson,randomThreshold,dado))
 
 
