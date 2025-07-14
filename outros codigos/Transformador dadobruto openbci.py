@@ -76,7 +76,7 @@ def processar_edf_para_openbci(diretorio_edf, filtragem, canais, algarismos_sign
         f"{nome_base}{epoca_suffix}_csv_openbci.csv"
     )
 
-    if True:
+    if False:
         caminho_saida = r'c:\Users\Enenon\Documents\OpenBCI_GUI\dado.csv'
 
     # Salvar CSV formatado
@@ -98,10 +98,10 @@ def processar_edf_para_openbci(diretorio_edf, filtragem, canais, algarismos_sign
     return caminho_saida
 
 # Exemplo de uso:
-arquivo_edf = r"f:\eeg-motor-movementimagery-dataset-1.0.0\files\S022\S022R04.edf"
+arquivo_edf = r"c:\Users\LaBios - BCI\Documents\eeg-motor-movementimagery-dataset-1.0.0\files\S001\S001R04.edf"
 canais_desejados = ['C3..', 'C4..', 'Fp1.', 'Fp2.', 'F7..', 'F3..', 'F4..', 'F8..','T7..', 'T8..', 'P7..', 'P3..', 'P4..', 'P8..', 'O1..', 'O2..']
 filtragem = (0.5, 50)
 algarismos_significativos = 4
-tarefa = "T2"  
+tarefa = "T1"  
 
 processar_edf_para_openbci(arquivo_edf, filtragem, canais_desejados, algarismos_significativos, tarefa)
