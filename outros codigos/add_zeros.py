@@ -1,5 +1,5 @@
 # Configuração:
-file_path     = r"C:\Users\batis\OneDrive\Área de Trabalho\Códigos diversos\dados_cobinados.csv"         # Caminho para o seu CSV (input e output são o mesmo)
+file_path     = r"c:\Users\LaBios - BCI\Documents\eeg-motor-movementimagery-dataset-1.0.0\files\S001\S001R04_T1_csv_openbci.csv"         # Caminho para o seu CSV (input e output são o mesmo)
 n_zero_lines  = 1000                       # Quantas linhas de zeros inserir
 header_lines = [
     '%OpenBCI Raw EXG Data\n',

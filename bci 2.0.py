@@ -6,7 +6,7 @@ from random import choice
 from keras.models import load_model
 #from tensorflow.keras.models import load_model
 import time
-from pylsl import StreamInlet, resolve_stream, local_clock # pylsl 1.16.2
+from pylsl import StreamInlet, resolve_stream, local_clock
 from time import sleep
 from sys import exit
 
@@ -23,15 +23,14 @@ min, max = -1238.0123, 1268.5555
 
 norm_dinamica = False # dita se vai utilizar os maximos e minimos de cada matriz ou um maximo e minimo global pra normalizar
 
-<<<<<<< HEAD
-model = load_model(r'C:\Users\Enenon\Documents\GitHub\bci-labios\modelos\melhor_modelo_fold_6_acc_0.9000.h5')
-=======
 model = load_model(r'C:\Users\LaBios - BCI\Documents\GitHub\bci\modelos\melhor_modelo_fold_6_acc_0.9000.h5')
->>>>>>> f1a437c6c29ec995d3dc39fe059c3d454dfef2d6
 
-limiar = 0.45 # limiar tem que estar entre 0 e 0.5
+limiar = 0.5 # limiar tem que estar entre 0 e 0.5
 
-task = 'T2' # é a tarefa que está sendo testada
+task = 'T1' # é a tarefa que está sendo testada
+
+# Flag para iniciar somente após encontrar amostra não-zero
+started = False
 
 model.summary()
 
@@ -131,32 +130,37 @@ while not keyboard.is_pressed('Esc'):
         # print(chunk)
         i = 0
         for ind, sample in enumerate(chunk): #não entendo direito o porque disso, mas parece que as séries temporais vêm do openbci como pacotes
-            data.append(sample)
-            if keyboard.is_pressed('g'):
-                try:
-                    print(f'Frequência: {1/(timestamp[ind]-tempo_a)}hz')
-                except: pass
-            if len(data) >= epochsize:
-                if time.time() - sistema.t0 > sistema.dt:
-                    sistema.t0 = time.time()
-                    if len(data) == epochsize:
-                        if primeiro: 
-                            l.append(data)
-                            l = np.array(l)
-                            primeiro = False
-                        if tipo_dado == 1: pred = predict(model,data).numpy()[0][0]
-                        else:
-                            rede_data = corrPearson(data)
-                            pred = predict(model, rede_data).numpy()[0][0]
-                            redes = redes + rede_data
-                        if pred < limiar: let = 'E'
-                        elif pred > 1 - limiar: let = 'D'
-                        else: let = 'P'
-                        tgraf.append(let)
-                        print('Avaliação:', let, round(pred,3),len(data))
-                #totdata += data
-                data.pop(0)
-            tempo_a = timestamp[ind]
+            if not started and np.any(np.array(sample) != 0):
+                started = True
+                sistema.t0 = time.time()
+                print("Dados não zerados detectados. Iniciando processamento.")
+            if started:
+                data.append(sample)
+                if keyboard.is_pressed('g'):
+                    try:
+                        print(f'Frequência: {1/(timestamp[ind]-tempo_a)}hz')
+                    except: pass
+                if len(data) >= epochsize:
+                    if time.time() - sistema.t0 > sistema.dt:
+                        sistema.t0 = time.time()
+                        if len(data) == epochsize:
+                            if primeiro: 
+                                l.append(data)
+                                l = np.array(l)
+                                primeiro = False
+                            if tipo_dado == 1: pred = predict(model,data).numpy()[0][0]
+                            else:
+                                rede_data = corrPearson(data)
+                                pred = predict(model, rede_data).numpy()[0][0]
+                                redes = redes + rede_data
+                            if pred < limiar: let = 'E'
+                            elif pred > 1 - limiar: let = 'D'
+                            else: let = 'P'
+                            tgraf.append(let)
+                            print('Avaliação:', let, round(pred,3),len(data))
+                    #totdata += data
+                    data.pop(0)
+                tempo_a = timestamp[ind]
 
 
 #%%
