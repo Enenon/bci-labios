@@ -6,7 +6,7 @@ from random import choice
 from keras.models import load_model
 #from tensorflow.keras.models import load_model
 import time
-from pylsl import StreamInlet, resolve_stream, local_clock
+from pylsl import StreamInlet, resolve_stream, local_clock # pylsl 1.16.2
 from time import sleep
 from sys import exit
 
@@ -23,7 +23,7 @@ min, max = -1238.0123, 1268.5555
 
 norm_dinamica = False # dita se vai utilizar os maximos e minimos de cada matriz ou um maximo e minimo global pra normalizar
 
-model = load_model(r'C:\Users\Enenon\Documents\Projetos Programacao\IC\data\modelo\melhor_modelo_fold_5_acc_0.8880 mudado.h5')
+model = load_model(r'C:\Users\Enenon\Documents\GitHub\bci-labios\modelos\melhor_modelo_fold_6_acc_0.9000.h5')
 
 limiar = 0.4 # limiar tem que estar entre 0 e 0.5
 
