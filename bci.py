@@ -23,11 +23,7 @@ min, max = -1238.0123, 1268.5555
 
 norm_dinamica = False # dita se vai utilizar os maximos e minimos de cada matriz ou um maximo e minimo global pra normalizar
 
-<<<<<<< HEAD
 model = load_model(r'C:\Users\Enenon\Documents\GitHub\bci-labios\modelos\melhor_modelo_fold_6_acc_0.9000.h5')
-=======
-model = load_model(r'C:\Users\LaBios - BCI\Documents\GitHub\bci\modelos\melhor_modelo_fold_6_acc_0.9000.h5')
->>>>>>> f1a437c6c29ec995d3dc39fe059c3d454dfef2d6
 
 limiar = 0.45 # limiar tem que estar entre 0 e 0.5
 

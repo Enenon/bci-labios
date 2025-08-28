@@ -98,11 +98,7 @@ def processar_edf_para_openbci(diretorio_edf, filtragem, canais, algarismos_sign
     return caminho_saida
 
 # Exemplo de uso:
-<<<<<<< HEAD
 arquivo_edf = r"c:\Users\Enenon\Downloads\eeg-motor-movementimagery-dataset-1.0.0\files\S004\S004R04.edf"
-=======
-arquivo_edf = r"c:\Users\LaBios - BCI\Documents\eeg-motor-movementimagery-dataset-1.0.0\files\S001\S001R04.edf"
->>>>>>> f1a437c6c29ec995d3dc39fe059c3d454dfef2d6
 canais_desejados = ['C3..', 'C4..', 'Fp1.', 'Fp2.', 'F7..', 'F3..', 'F4..', 'F8..','T7..', 'T8..', 'P7..', 'P3..', 'P4..', 'P8..', 'O1..', 'O2..']
 filtragem = (0.5, 50)
 algarismos_significativos = 4
