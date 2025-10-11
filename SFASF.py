@@ -9,16 +9,19 @@ from keras.models import load_model
 from tensorflow.keras.optimizers import Adam
 
 # Carrega o modelo (entrada esperada: batch x 721 x 16)
-model = load_model(r"C:\Users\Enenon\Downloads\tentativa\pessoa86ac0.98.h5")
+model = load_model(r"C:\Users\Enenon\Documents\GitHub\bci-labios\modelos\modelo rede c.h5")
 model.compile(optimizer=Adam(1e-4), loss='binary_crossentropy', metrics=['accuracy'])
 model.summary()
 
 # ---------- CONFIGURAÇÕES ----------
+
+tipo_dado = 2 # 0 = dado bruto, 1 = rede, 2 = rede com caracteristicas
+
 fases = ['T1','T2']  # ← 'T1' ou 'T2'
 time_fase1 = 76.5
 time_fase2 = 81.0
 time_fase3 = 67.5
-limiar = 0.4
+limiar = 0.499
 # Sequência de verdadeiros rótulos para Fase 3 (preencher manualmente)
 truth_sequence3 = ['T1', 'T0', 'T2', 'T1', 'T0', 'T2', 'T1', 'T0', 'T2', 'T1', 'T0', 'T2', 'T1', 'T0', 'T2']  # exemplo: ['T1','T2','T0', ...]
 cm_predicoes = np.array([[0 for j in range(3)] for i in range(3)])
@@ -42,8 +45,82 @@ def predict(model, input_sample):
     arr = np.expand_dims(arr, axis=0)
     return model(arr, training=False)
 
+from numpy import zeros
+
+def S(matriz):
+    som = [sum(i) for i in matriz]
+    return som
+
+def C(matriz):
+    cs = zeros(len(matriz))
+    for i in range(len(matriz)):
+        x = 0
+        y = 0
+        z = 0
+        for j in range(len(matriz)):
+            y = y + matriz[i][j]
+            z = z + matriz[i][j]**2
+            for k in range(len(matriz)):
+                x = x + matriz[i][j]*matriz[j][k]*matriz[k][i]
+        cs[i] = x/(y**2 + z)
+    return cs
+
+def I(matriz):
+    iss = [[1/i if i != 0 else 0 for i in j] for j in matriz]
+    ii = [sum(j)/(len(iss)-1) for j in iss]
+    return ii
+
+def corrPearson(matriz):
+    matriz = np.transpose(matriz)
+    m = np.zeros((len(matriz),len(matriz)))
+    meanM = [np.mean(matriz[i,:]) for i in range(len(matriz))]
+    for x in range(len(m)):
+        for y in range(len(m)):
+            xm, ym = matriz[x,:], matriz[y,:]
+            xx = xm - meanM[x]
+            yy = ym - meanM[y]
+            m[x,y] = round(sum((xx)*(yy))/(np.sqrt(sum(xx*xx)) * np.sqrt(sum(yy*yy))),3)
+    return m
+
+def randomThreshold(corr,matriz):
+    smatriz = matriz.copy() # por causa da falta desse .copy() eu tava tendo meio mundo de dor de cabeça
+    for i in range(len(smatriz[0])):
+        smatriz[:,i] = np.random.permutation(smatriz[:,i])
+    return corr(smatriz)
+
+def rede(corr,threshold,matriz,intervalos=100):
+    REAl = []
+    for n in range(int(len(matriz)/intervalos)):
+        m = matriz[n*intervalos:(n+1)*intervalos]
+        rnd = threshold(corr,m)
+        # tirando os 1 da diagonal
+        for i in range(len(rnd)): rnd[i,i] = 0
+        maxim = rnd.max()
+        rmatriz = np.array([[i if i > maxim else 0 for i in j] for j in corr(matriz)])
+        REAl.append(rmatriz)
+    REDEM = sum(np.array(REAl))/int(len(matriz)/intervalos)
+    return REDEM
+
+def redep(matriz): # essa função cria a REA da serie
+    return rede(corrPearson,randomThreshold,matriz)
+
+def redetot(matriz): #  essa função cria a REA junto com as características strength, cloyster coefficient e charateristic path length
+    rmatriz = redep(matriz)
+    nm = np.concatenate((rmatriz,np.array([S(rmatriz)]),np.array([C(rmatriz)]),np.array([I(rmatriz)])),axis=0)
+    return nm
+
+def brut(matriz):
+    return matriz
+
+conversao = [brut,redep,redetot][tipo_dado]
+
+
 # Inicializa stream
-epochsize = model.input_shape[1]
+if tipo_dado == 0:
+    epochsize = model.input_shape[1]
+else:
+    epochsize = 721
+
 print(f"Aguardando stream EEG... input shape: {model.input_shape}")
 streams = resolve_stream('type', 'EEG')
 inlet = StreamInlet(streams[0])
@@ -106,7 +183,7 @@ while not keyboard.is_pressed('Esc'):
             continue
 
         # Predição
-        pred = predict(model, current_data).numpy()[0][0]
+        pred = predict(model, conversao(np.array(current_data))).numpy()[0][0]
         if pred < limiar:
             label = 'T1'
         elif pred > 1 - limiar:

@@ -10,6 +10,8 @@ from pylsl import StreamInlet, resolve_stream, local_clock
 from time import sleep
 from sys import exit
 
+tipo_dado = 0 # 0 = dado bruto, 1 = rede, 2 = rede com caracteristicas
+
 class Sistema():
     def __init__(self):
         pass
@@ -17,13 +19,14 @@ class Sistema():
     t0 = time.time()
     dt = 0.3
 
-tipo_dado = {'rede':0,'bruto':1}[['rede','bruto'][1]]
+
+#tipo_dado = {'rede':0,'bruto':1}[['rede','bruto'][1]]
 
 min, max = -1238.0123, 1268.5555
 
-norm_dinamica = False # dita se vai utilizar os maximos e minimos de cada matriz ou um maximo e minimo global pra normalizar
+norm_dinamica = True # dita se vai utilizar os maximos e minimos de cada matriz ou um maximo e minimo global pra normalizar
 
-model = load_model(r'C:\Users\LaBios - BCI\Documents\GitHub\bci\modelos\melhor_modelo_fold_6_acc_0.9000.h5')
+model = load_model(r'C:\Users\Enenon\Documents\GitHub\bci-labios\modelos\modelo rede c.h5')
 
 limiar = 0.5 # limiar tem que estar entre 0 e 0.5
 
@@ -50,9 +53,33 @@ def predict(model,input):
 def predict2(model,matriz):
     return choice(['Esquerda','Direita','Parado'])
 
+from numpy import zeros
+
+def S(matriz):
+    som = [sum(i) for i in matriz]
+    return som
+
+def C(matriz):
+    cs = zeros(len(matriz))
+    for i in range(len(matriz)):
+        x = 0
+        y = 0
+        z = 0
+        for j in range(len(matriz)):
+            y = y + matriz[i][j]
+            z = z + matriz[i][j]**2
+            for k in range(len(matriz)):
+                x = x + matriz[i][j]*matriz[j][k]*matriz[k][i]
+        cs[i] = x/(y**2 + z)
+    return cs
+
+def I(matriz):
+    iss = [[1/i if i != 0 else 0 for i in j] for j in matriz]
+    ii = [sum(j)/(len(iss)-1) for j in iss]
+    return ii
+
 def corrPearson(matriz):
     matriz = np.transpose(matriz)
-    if len(matriz[0]) > len(matriz[1]): print('Aviso! Talvez a matriz para correlação precise ser transposta!')
     m = np.zeros((len(matriz),len(matriz)))
     meanM = [np.mean(matriz[i,:]) for i in range(len(matriz))]
     for x in range(len(m)):
@@ -60,8 +87,39 @@ def corrPearson(matriz):
             xm, ym = matriz[x,:], matriz[y,:]
             xx = xm - meanM[x]
             yy = ym - meanM[y]
-            m[x,y] = sum((xx)*(yy))/(np.sqrt(sum(xx*xx)) * np.sqrt(sum(yy*yy)))
+            m[x,y] = round(sum((xx)*(yy))/(np.sqrt(sum(xx*xx)) * np.sqrt(sum(yy*yy))),3)
     return m
+
+def randomThreshold(corr,matriz):
+    smatriz = matriz.copy() # por causa da falta desse .copy() eu tava tendo meio mundo de dor de cabeça
+    for i in range(len(smatriz[0])):
+        smatriz[:,i] = np.random.permutation(smatriz[:,i])
+    return corr(smatriz)
+
+def rede(corr,threshold,matriz,intervalos=100):
+    REAl = []
+    for n in range(int(len(matriz)/intervalos)):
+        m = matriz[n*intervalos:(n+1)*intervalos]
+        rnd = threshold(corr,m)
+        # tirando os 1 da diagonal
+        for i in range(len(rnd)): rnd[i,i] = 0
+        maxim = rnd.max()
+        rmatriz = np.array([[i if i > maxim else 0 for i in j] for j in corr(matriz)])
+        REAl.append(rmatriz)
+    REDEM = sum(np.array(REAl))/int(len(matriz)/intervalos)
+    return REDEM
+
+def redep(matriz): # essa função cria a REA da serie
+    return rede(corrPearson,randomThreshold,matriz.transpose())
+
+def redetot(matriz): #  essa função cria a REA junto com as características strength, cloyster coefficient e charateristic path length
+    nm = np.concatenate((redep(matriz),S(matriz),C(matriz),I(matriz)),axis=0)
+    return nm
+
+def brut(matriz):
+    return matriz
+
+conversao = [brut,redep,redetot][tipo_dado]
 
 epochsize = model.input_shape[1] # tá 10 pontos, tem que converter pra segundos pra ficar mais claro
 
@@ -69,7 +127,7 @@ print('Modelo carregado!')
 print('Input shape:',model.input_shape)
 print('Output shape:',model.output_shape)
 
-if tipo_dado == 0 and model.input_shape[1] != model.input_shape[2]: raise ValueError(f'Erro! O seu modelo não foi feito para trabalhar com redes. Shape do modelo:{model.input_shape}, shape esperado: (None, {model.input_shape[2]}, {model.input_shape[2]})')
+if tipo_dado == 1 and model.input_shape[1] != model.input_shape[2]: raise ValueError(f'Erro! O seu modelo não foi feito para trabalhar com redes. Shape do modelo:{model.input_shape}, shape esperado: (None, {model.input_shape[2]}, {model.input_shape[2]})')
 
 print("procurando por uma stream EEG...")
 streams = resolve_stream('type', 'EEG')
@@ -123,11 +181,8 @@ while not keyboard.is_pressed('Esc'):
     # get chunks of samples
     chunk, timestamp = inlet.pull_chunk()
     if chunk:
-        #print("\nNew chunk!")
         numChunks += 1
-        # print( len(chunk) )
         totalNumSamples += len(chunk)
-        # print(chunk)
         i = 0
         for ind, sample in enumerate(chunk): #não entendo direito o porque disso, mas parece que as séries temporais vêm do openbci como pacotes
             if not started and np.any(np.array(sample) != 0):
@@ -148,10 +203,9 @@ while not keyboard.is_pressed('Esc'):
                                 l.append(data)
                                 l = np.array(l)
                                 primeiro = False
-                            if tipo_dado == 1: pred = predict(model,data).numpy()[0][0]
-                            else:
-                                rede_data = corrPearson(data)
-                                pred = predict(model, rede_data).numpy()[0][0]
+                            pred = predict(model,conversao(data)).numpy()[0][0]
+                            if tipo_dado == 1:
+                                rede_data = redep(data)
                                 redes = redes + rede_data
                             if pred < limiar: let = 'E'
                             elif pred > 1 - limiar: let = 'D'
