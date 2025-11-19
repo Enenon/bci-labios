@@ -180,7 +180,7 @@ class JanelaInicial(QMainWindow):
         raw = mne.io.RawArray(self.current_data, self.data_info)
         self.frameGrafico
         raw.plot()
-    def abrir_janela_teste(self):
+    def abrir_janela_teste(self):   
         self.janela_teste = JanelaTeste()
 
     def abrir_modelo(self):
@@ -190,7 +190,7 @@ class JanelaInicial(QMainWindow):
         try:
             self.model = load_model(fname[0])
             self.model.compile(optimizer=Adam(1e-4), loss='binary_crossentropy', metrics=['accuracy'])
-            self.label_5.setText('shape:'+str(self.model.input_shape)+'\noutput shape:'+str(model.output_shape)+'\nmetric names:'+
+            self.label_5.setText('shape:'+str(self.model.input_shape)+'\noutput shape:'+str(self.model.output_shape)+'\nmetric names:'+
                                  str(self.model.metrics_names))
             self.label_5.setPalette(self.palette_verde)
         except:
