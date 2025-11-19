@@ -151,7 +151,7 @@ class JanelaInicial(QMainWindow):
     current_data = []
     epochsize = []
     limiar = 0.4
-    data_info = mne.create_info()
+    #data_info = mne.create_info()
 
     def update_plot(self):
         # Puxa chunk de amostras
@@ -177,9 +177,14 @@ class JanelaInicial(QMainWindow):
             else:
                 label = 'T0'
 
-        raw = mne.io.RawArray(self.current_data, self.data_info)
+        #raw = mne.io.RawArray(self.current_data, self.data_info)
+        raw = mne.io.RawArray(self.current_data)
         self.frameGrafico
-        raw.plot()
+        fig = raw.plot()
+        canvas = FigureCanvas(fig)
+        self.frameGrafico_layout.removeWidget(self.canvas)
+        self.canvas = canvas
+        self.frameGrafico_layout.addWidget(self.canvas)
     def abrir_janela_teste(self):   
         self.janela_teste = JanelaTeste()
 
