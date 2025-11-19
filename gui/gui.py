@@ -5,7 +5,7 @@ import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 from PyQt5 import QtWidgets, QtCore, QtGui
-from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog
+from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QLabel
 import sys
 import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -18,7 +18,7 @@ from pylsl import StreamInlet, resolve_stream, resolve_byprop
 from time import sleep
 import matplotlib.pyplot as plt
 from random import choice
-
+import mne
 
 class JanelaInicial(QMainWindow):
     def __init__(self):
@@ -40,6 +40,13 @@ class JanelaInicial(QMainWindow):
 
         # aqui ficará o gráfico da serie temporal
         self.frameGrafico = QtWidgets.QFrame(self.verticalLayoutWidget)
+        self.frameGrafico_layout = QtWidgets.QVBoxLayout(self.frameGrafico)
+        self.frameGrafico_layout.setContentsMargins(0,0,0,0)
+        self.canvas = FigureCanvas(Figure(figsize=(5,3)))
+        self.frameGrafico_layout.addWidget(self.canvas)
+        self.ax = self.canvas.figure.add_subplot(111)
+        self.ax.set_title('Série Temporal EEG')
+        self.ax.set_xlabel('Tempo (s)')
         self.frameGrafico.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.frameGrafico.setFrameShadow(QtWidgets.QFrame.Raised)
         self.frameGrafico.setObjectName("frameGrafico")
@@ -128,10 +135,51 @@ class JanelaInicial(QMainWindow):
         self.treinar_modelo.triggered.connect(self.abrir_janela_teste)
         self.button.clicked.connect(self.conectar_LSL)
         self.button_iniciarBCI.clicked.connect(self.abrir_janela_teste)
+        self.button_iniciarBCI.clicked.connect(self.iniciar_bci)
         QtCore.QMetaObject.connectSlotsByName(self)
         #self.show()
     
+    def iniciar_bci(self):
+        # Inicia ao detectar dados não-zero
+        self.timer_plot = QtCore.QTimer(self)
+        self.timer_plot.timeout.connect(self.update_plot)
+        self.timer_plot.start(1)
 
+    def predict(self,arr):
+        return self.model(arr, training=False)
+
+    current_data = []
+    epochsize = []
+    limiar = 0.4
+    data_info = mne.create_info()
+
+    def update_plot(self):
+        # Puxa chunk de amostras
+        chunk, _ = self.inlet.pull_chunk()
+        if not chunk:
+            return None
+
+        for sample in chunk:
+            # janela deslizante
+            self.current_data.append(sample)
+            if len(self.current_data) > self.epochsize:
+                self.current_data.pop(0)
+            if len(self.current_data) < self.epochsize:
+                continue
+
+            # Predição
+            pred = self.predict(self.current_data).numpy()[0][0]
+            self.label_4.setText(str(pred))
+            if pred < self.limiar:
+                label = 'T1'
+            elif pred > 1 - self.limiar:
+                label = 'T2'
+            else:
+                label = 'T0'
+
+        raw = mne.io.RawArray(self.current_data, self.data_info)
+        self.frameGrafico
+        raw.plot()
     def abrir_janela_teste(self):
         self.janela_teste = JanelaTeste()
 
@@ -140,10 +188,10 @@ class JanelaInicial(QMainWindow):
    '../',"Model files (*.h5)")
         print(fname)
         try:
-            model = load_model(r"C:\Users\Enenon\Documents\GitHub\bci-labios\modelos\modelo rede c.h5")
-            model.compile(optimizer=Adam(1e-4), loss='binary_crossentropy', metrics=['accuracy'])
-            self.label_5.setText('shape:'+str(model.input_shape)+'\noutput shape:'+str(model.output_shape)+'\nmetric names:'+
-                                 str(model.metrics_names))
+            self.model = load_model(fname[0])
+            self.model.compile(optimizer=Adam(1e-4), loss='binary_crossentropy', metrics=['accuracy'])
+            self.label_5.setText('shape:'+str(self.model.input_shape)+'\noutput shape:'+str(model.output_shape)+'\nmetric names:'+
+                                 str(self.model.metrics_names))
             self.label_5.setPalette(self.palette_verde)
         except:
             self.label_5.setText('Modelo incompatível.')
@@ -158,6 +206,7 @@ class JanelaInicial(QMainWindow):
         self.label_2.setPalette(self.palette_amarela)
         QApplication.processEvents() # <--- isso aplica as mudanças antes da função acabar
         self.streams = resolve_byprop('type', 'EEG',timeout=3)
+        self.inlet = StreamInlet(self.streams[0])
         if self.streams:
             palette = QtGui.QPalette()
             palette.setBrush(QtGui.QPalette.All, QtGui.QPalette.WindowText,QtGui.QBrush(QtGui.QColor(4,150,0)))
@@ -172,7 +221,7 @@ class JanelaInicial(QMainWindow):
 class JanelaTeste(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setGeometry(200,200,250,50)
+        self.setGeometry(200,200,350,50)
         self.setWindowTitle('Teste')
         self.label = QtWidgets.QLabel("Recurso indisponível!",self)
         self.label.setGeometry(QtCore.QRect(1,8,100,23))
@@ -194,8 +243,6 @@ class JanelaTeste(QMainWindow):
         if self.t > np.pi: self.t = 0
         self.label.setPalette(self.palette)
         
-
-
 
 
 class Janela1(QMainWindow):
