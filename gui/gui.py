@@ -134,11 +134,13 @@ class JanelaInicial(QMainWindow):
         self.menubar.addmodelo.triggered.connect(self.abrir_modelo)
         self.treinar_modelo.triggered.connect(self.abrir_janela_teste)
         self.button.clicked.connect(self.conectar_LSL)
-        self.button_iniciarBCI.clicked.connect(self.abrir_janela_teste)
+        #self.button_iniciarBCI.clicked.connect(self.abrir_janela_teste)
         self.button_iniciarBCI.clicked.connect(self.iniciar_bci)
         QtCore.QMetaObject.connectSlotsByName(self)
         #self.show()
     
+
+
     def iniciar_bci(self):
         # Inicia ao detectar dados não-zero
         self.timer_plot = QtCore.QTimer(self)
@@ -148,10 +150,12 @@ class JanelaInicial(QMainWindow):
     def predict(self,arr):
         return self.model(arr, training=False)
 
+    canais = ['C3..', 'C4..', 'Fp1.', 'Fp2.', 'F7..', 'F3..', 'F4..', 'F8..','T7..', 'T8..', 'P7..', 'P3..', 'P4..', 'P8..', 'O1..', 'O2..']
+
     current_data = []
-    epochsize = []
+    epochsize = 71
     limiar = 0.4
-    #data_info = mne.create_info()
+    data_info = mne.create_info(canais,sfreq=60)
 
     def update_plot(self):
         # Puxa chunk de amostras
@@ -168,23 +172,34 @@ class JanelaInicial(QMainWindow):
                 continue
 
             # Predição
-            pred = self.predict(self.current_data).numpy()[0][0]
+            try:
+                pred = self.predict(self.current_data).numpy()[0][0]
+                if pred < self.limiar:
+                    label = 'T1'
+                elif pred > 1 - self.limiar:
+                    label = 'T2'
+                else:
+                    label = 'T0'
+            except:
+                pred = 'Err'
             self.label_4.setText(str(pred))
-            if pred < self.limiar:
-                label = 'T1'
-            elif pred > 1 - self.limiar:
-                label = 'T2'
-            else:
-                label = 'T0'
+
 
         #raw = mne.io.RawArray(self.current_data, self.data_info)
-        raw = mne.io.RawArray(self.current_data)
-        self.frameGrafico
-        fig = raw.plot()
+
+        raw = mne.io.RawArray(np.array(self.current_data).transpose(), self.data_info)
+        #self.frameGrafico
+        '''self.ax = raw.plot(show=False,scalings='auto')
         canvas = FigureCanvas(fig)
         self.frameGrafico_layout.removeWidget(self.canvas)
         self.canvas = canvas
-        self.frameGrafico_layout.addWidget(self.canvas)
+        self.frameGrafico_layout.addWidget(self.canvas)'''
+        self.ax.clear()
+        # desenhar um canal (ex.: canal 0) ou média:
+        self.ax.plot(raw.plot(show=False))
+        self.ax.set_title('Série Temporal EEG')
+        self.ax.set_xlabel('Tempo (s)')
+        self.canvas.draw()
     def abrir_janela_teste(self):   
         self.janela_teste = JanelaTeste()
 
@@ -211,8 +226,8 @@ class JanelaInicial(QMainWindow):
         self.label_2.setPalette(self.palette_amarela)
         QApplication.processEvents() # <--- isso aplica as mudanças antes da função acabar
         self.streams = resolve_byprop('type', 'EEG',timeout=3)
-        self.inlet = StreamInlet(self.streams[0])
         if self.streams:
+            self.inlet = StreamInlet(self.streams[0])
             palette = QtGui.QPalette()
             palette.setBrush(QtGui.QPalette.All, QtGui.QPalette.WindowText,QtGui.QBrush(QtGui.QColor(4,150,0)))
             self.label_2.setText('Conectado!')
@@ -222,7 +237,7 @@ class JanelaInicial(QMainWindow):
             self.label_2.setPalette(self.palette_vermelha)
             self.label_2.setText('Desconectado')
             
-        
+
 class JanelaTeste(QMainWindow):
     def __init__(self):
         super().__init__()
