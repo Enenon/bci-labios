@@ -183,11 +183,12 @@ class JanelaInicial(QMainWindow):
         self.ax_fft = self.figure_FFT.add_subplot(111) # subplot com 1 linha e 1 coluna no índice 1
         
         self.escala_FFT = 200
+        self.xlim_FFT = 200
         self.normalizacaoFFT = 1
         self.ax_fft.set_title('Transformada de Fourier')
         self.ax_fft.set_xlabel('Frequencia')
         self.ax_fft.set_yticks([])
-        self.ax_fft.set_xlim(0, self.epochsize)
+        self.ax_fft.set_xlim(0, self.xlim_FFT)
 
         self.ax_fft.set_ylim(-self.escala_visual, self.n_channels * self.escala_FFT + self.escala_FFT - 700) #botei esse 700 pra ficar mais encaixado no grafico
         
@@ -195,7 +196,7 @@ class JanelaInicial(QMainWindow):
         self.lines_fft = []
         for i in range(self.n_channels):
            # Plotamos uma linha vazia para cada canal
-           line_fft, = self.ax_fft.plot([0,self.epochsize], 2*[i*self.escala_FFT], lw=1) 
+           line_fft, = self.ax_fft.plot([0,self.xlim_FFT], 2*[0], lw=1) 
            self.lines_fft.append(line_fft)
 
         
@@ -252,8 +253,8 @@ class JanelaInicial(QMainWindow):
            
             line.set_data(x_data, channel_data + offset)
 
-            fft_data = fft(channel_data)/self.normalizacaoFFT
-            self.lines_fft[i].set_data([i for i in range(len(fft_data))],fft_data + i * self.escala_FFT)
+            fft_data = fft(channel_data[len(channel_data)-200:])/self.normalizacaoFFT
+            self.lines_fft[i].set_data([i for i in range(len(fft_data))],fft_data)
 
         # Redesenha apenas o canvas
         self.canvas.draw_idle()
