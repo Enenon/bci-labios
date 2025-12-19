@@ -9,13 +9,13 @@ from keras.models import load_model
 from tensorflow.keras.optimizers import Adam
 
 # Carrega o modelo (entrada esperada: batch x 721 x 16)
-model = load_model(r"C:\Users\Enenon\Documents\GitHub\bci-labios\modelos\modelo rede c.h5")
+model = load_model(r"c:\Users\LaBios - BCI\Documents\GitHub\bci\modelos\melhor_modelo_fold_6_acc_0.9000.h5")
 model.compile(optimizer=Adam(1e-4), loss='binary_crossentropy', metrics=['accuracy'])
 model.summary()
 
 # ---------- CONFIGURAÇÕES ----------
 
-tipo_dado = 2 # 0 = dado bruto, 1 = rede, 2 = rede com caracteristicas
+tipo_dado = 0 # 0 = dado bruto, 1 = rede, 2 = rede com caracteristicas
 
 fases = ['T1','T2']  # ← 'T1' ou 'T2'
 time_fase1 = 76.5

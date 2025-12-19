@@ -30,8 +30,9 @@ class JanelaInicial(QMainWindow):
         # --- Configurações de Dados ---
         self.canais = ['C3..', 'C4..', 'Fp1.', 'Fp2.', 'F7..', 'F3..', 'F4..', 'F8..','T7..', 'T8..', 'P7..', 'P3..', 'P4..', 'P8..', 'O1..', 'O2..']
         self.n_channels = len(self.canais)
-        self.epochsize = 700
-        self.current_data = np.zeros((self.epochsize, self.n_channels))
+        self.x_size = 1000
+        self.epochsize = 721
+        self.current_data = np.zeros((self.x_size, self.n_channels))
         self.limiar = 0.4
 
         # Setup da UI com layouts (coluna esquerda = controles, coluna direita = visualização expansível)
@@ -62,10 +63,10 @@ class JanelaInicial(QMainWindow):
         self.ax_seriet = self.figure.add_subplot(111)
         
         # Configuração estética do gráfico
-        self.ax_seriet.set_title('Série Temporal EEG (Real-time)')
-        self.ax_seriet.set_xlabel('Amostras')
-        self.ax_seriet.set_yticks([]) # Remove eixo Y numérico para limpar
-        self.ax_seriet.set_xlim(0, self.epochsize)
+        self.ax.set_title('Série Temporal EEG (Real-time)')
+        self.ax.set_xlabel('Amostras')
+        self.ax.set_yticks([]) # Remove eixo Y numérico para limpar
+        self.ax.set_xlim(0, self.x_size)
         # Ajusta limite Y para caber todos os canais empilhados (waterfall)
         self.escala_visual = 750 # Fator para separar as linhas visualmente
         self.ax_seriet.set_ylim(-self.escala_visual, self.n_channels * self.escala_visual + self.escala_visual - 700) #botei esse 700 pra ficar mais encaixado no grafico
@@ -226,22 +227,25 @@ class JanelaInicial(QMainWindow):
         new_len = len(chunk)
         self.current_data = np.roll(self.current_data, -new_len, axis=0)
         self.current_data[-new_len:, :] = chunk
+        print(self.current_data.shape)
+        print(np.array([self.current_data]).shape)
+    
         try:
-               pred = self.predict(self.current_data).numpy()[0][0]
-               if pred < self.limiar:
-                  label = 'T1'
-               elif pred > 1 - self.limiar:
-                  label = 'T2'
-               else:
-                  label = 'T0'
-        except:
-           pred = 'Err'
+            pred = self.predict(np.array([self.current_data[self.x_size - self.epochsize:]])).numpy()[0][0]
+            if pred < self.limiar:
+                label = 'T1'
+            elif pred > 1 - self.limiar:
+                label = 'T2'
+            else:
+                label = 'T0'
+        except: pred = 'Modelo incompatível'
+
 
         self.label_previsao.setText(str(pred))
 
         # 4. ATUALIZAÇÃO DO GRÁFICO (A mágica acontece aqui)
-        # Eixo X é sempre o mesmo (0 a epochsize)
-        x_data = np.arange(self.epochsize)
+        # Eixo X é sempre o mesmo (0 a x_size)
+        x_data = np.arange(self.x_size)
         
         for i, line in enumerate(self.lines):
             # Pegamos os dados do canal i
