@@ -63,10 +63,10 @@ class JanelaInicial(QMainWindow):
         self.ax_seriet = self.figure.add_subplot(111)
         
         # Configuração estética do gráfico
-        self.ax.set_title('Série Temporal EEG (Real-time)')
-        self.ax.set_xlabel('Amostras')
-        self.ax.set_yticks([]) # Remove eixo Y numérico para limpar
-        self.ax.set_xlim(0, self.x_size)
+        self.ax_seriet.set_title('Série Temporal EEG (Real-time)')
+        self.ax_seriet.set_xlabel('Amostras')
+        self.ax_seriet.set_yticks([]) # Remove eixo Y numérico para limpar
+        self.ax_seriet.set_xlim(0, self.x_size)
         # Ajusta limite Y para caber todos os canais empilhados (waterfall)
         self.escala_visual = 750 # Fator para separar as linhas visualmente
         self.ax_seriet.set_ylim(-self.escala_visual, self.n_channels * self.escala_visual + self.escala_visual - 700) #botei esse 700 pra ficar mais encaixado no grafico
@@ -191,7 +191,7 @@ class JanelaInicial(QMainWindow):
         self.ax_fft.set_yticks([])
         self.ax_fft.set_xlim(0, self.xlim_FFT)
 
-        self.ax_fft.set_ylim(-self.escala_visual, self.n_channels * self.escala_FFT + self.escala_FFT - 700) #botei esse 700 pra ficar mais encaixado no grafico
+        self.ax_fft.set_ylim(0, self.n_channels * self.escala_FFT + self.escala_FFT - 700) #botei esse 700 pra ficar mais encaixado no grafico
         
 
         self.lines_fft = []
@@ -227,8 +227,8 @@ class JanelaInicial(QMainWindow):
         new_len = len(chunk)
         self.current_data = np.roll(self.current_data, -new_len, axis=0)
         self.current_data[-new_len:, :] = chunk
-        print(self.current_data.shape)
-        print(np.array([self.current_data]).shape)
+        #print(self.current_data.shape)
+        #print(np.array([self.current_data]).shape)
     
         try:
             pred = self.predict(np.array([self.current_data[self.x_size - self.epochsize:]])).numpy()[0][0]
@@ -257,8 +257,13 @@ class JanelaInicial(QMainWindow):
            
             line.set_data(x_data, channel_data + offset)
 
-            fft_data = fft(channel_data[len(channel_data)-200:])/self.normalizacaoFFT
-            self.lines_fft[i].set_data([i for i in range(len(fft_data))],fft_data)
+            segment_FFT = channel_data[-self.xlim_FFT*2:]
+            fft_data = fft(segment_FFT)/self.normalizacaoFFT
+            fft_mag = np.abs(fft_data)[:len(segment_FFT)//2]   # magnitude, só metade positiva
+            freqs = np.arange(len(fft_mag))                # índices (ou converta p/ Hz com fs)
+            self.lines_fft[i].set_data(freqs, fft_mag)
+            #self.lines_fft[i].set_data([i for i in range(len(fft_data))],fft_data)
+
 
         # Redesenha apenas o canvas
         self.canvas.draw_idle()
