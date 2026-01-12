@@ -96,6 +96,7 @@ class JanelaInicial(QMainWindow):
         self.comboBoxPlots = QComboBox(self.visual_widget)
         self.comboBoxPlots.addItem('Série temporal')
         self.comboBoxPlots.addItem('FFT')
+        self.comboBoxPlots.addItem('FFT frequência específica')
         self.horizontalLayout.addWidget(self.comboBoxPlots)
         self.button_abrirjanela = QPushButton('Abir em nova janela',self.visual_widget)
         self.horizontalLayout.addWidget(self.button_abrirjanela)
@@ -192,7 +193,6 @@ class JanelaInicial(QMainWindow):
         self.ax_fft.set_xlim(0, self.xlim_FFT)
 
         self.ax_fft.set_ylim(0, self.n_channels * self.escala_FFT + self.escala_FFT - 700) #botei esse 700 pra ficar mais encaixado no grafico
-        
 
         self.lines_fft = []
         for i in range(self.n_channels):
@@ -200,8 +200,27 @@ class JanelaInicial(QMainWindow):
            line_fft, = self.ax_fft.plot([0,self.xlim_FFT], 2*[0], lw=1) 
            self.lines_fft.append(line_fft)
 
+        # plot da serie temporal de uma frequencia
+
+        self.figure_FFT_especifico = Figure(figsize=(5, 3), dpi=100)
+        self.canvas_FFT_especifico = FigureCanvas(self.figure_FFT_especifico)
+
+        self.ax_FFT_especifico = self.figure_FFT_especifico.add_subplot(111) # subplot com 1 linha e 1 coluna no índice 1
         
-    
+        self.escala_FFT_especifico = 200
+        self.xlim_FFT_especifico = 200
+        self.normalizacaoFFT_especifico = 1
+        self.ax_FFT_especifico.set_title('FFT frequencia especifica')
+        self.ax_FFT_especifico.set_xlabel('Tempo(s)')
+        self.ax_FFT_especifico.set_yticks([])
+        self.ax_FFT_especifico.set_xlim(0, self.xlim_FFT_especifico)
+
+        self.ax_FFT_especifico.set_ylim(0, 8000) #botei esse 700 pra ficar mais encaixado no grafico
+        self.FFT_especifico_array = []
+        self.FFT_especifico_indice = 0
+        self.FFT_especifico_freq = 0
+        self.FFT_especifico_frames = 100
+        self.line_FFT_especifico, = self.ax_FFT_especifico.plot([], [], lw=1)
 
 
 
@@ -258,18 +277,25 @@ class JanelaInicial(QMainWindow):
             line.set_data(x_data, channel_data + offset)
 
             segment_FFT = channel_data[-self.xlim_FFT*2:]
-            fft_data = fft(segment_FFT)/self.normalizacaoFFT
+            fft_data = fft(segment_FFT)
             fft_mag = np.abs(fft_data)[:len(segment_FFT)//2]   # magnitude, só metade positiva
-            freqs = np.arange(len(fft_mag))                # índices (ou converta p/ Hz com fs)
-            self.lines_fft[i].set_data(freqs, fft_mag)
+            freqs = np.arange(len(fft_mag))            # índices (ou converta p/ Hz com fs)
+            self.lines_fft[i].set_data(freqs, fft_mag/self.normalizacaoFFT)
+
+            if i == self.FFT_especifico_indice:
+                self.FFT_especifico_array.append(fft_data[self.FFT_especifico_freq])
+                if len(self.FFT_especifico_array) > self.FFT_especifico_frames:
+                    self.FFT_especifico_array.pop(0)
             #self.lines_fft[i].set_data([i for i in range(len(fft_data))],fft_data)
 
-
+        self.line_FFT_especifico.set_data(np.arange(len(self.FFT_especifico_array)), np.array(self.FFT_especifico_array) / self.normalizacaoFFT_especifico)
+        print(len(self.FFT_especifico_array))
+        self.canvas_FFT_especifico.draw_idle()
         # Redesenha apenas o canvas
         self.canvas.draw_idle()
 
         self.canvas_FFT.draw_idle()
-
+    
 
 
     def abrir_janela_teste(self):   
@@ -353,6 +379,30 @@ class JanelaPlot(QMainWindow):
                 self.layoutConfigs.addWidget(QWidget(self),8)
 
                 self.normButton.clicked.connect(self.normalizar)
+            case 2:
+                self.layout1.addWidget(principal.canvas_FFT_especifico)
+
+                self.channelText = QPlainTextEdit(self.centralwidget)
+                self.channelText.setPlainText(str(principal.FFT_especifico_indice))
+                self.channelButton = QPushButton('Mudar canal')
+                self.channelButton.clicked.connect(self.escolher_canal)
+
+                self.freqText = QPlainTextEdit(self.centralwidget)
+                self.freqText.setPlainText(str(principal.FFT_especifico_indice))
+                self.freqButton = QPushButton('Mudar frequencia')
+                self.freqButton.clicked.connect(self.escolher_frequencia)
+
+                self.layoutChannel = QHBoxLayout(self.centralwidget)
+                self.layout1.addLayout(self.layoutChannel,1)
+                self.layoutChannel.addWidget(self.channelText,1)
+                self.layoutChannel.addWidget(self.channelButton,1)
+                self.layoutChannel.addWidget(QWidget(self),8)
+
+                self.layoutFreq = QHBoxLayout(self.centralwidget)
+                self.layout1.addLayout(self.layoutFreq,2)
+                self.layoutFreq.addWidget(self.freqText,1)
+                self.layoutFreq.addWidget(self.freqButton,1)
+                self.layoutFreq.addWidget(QWidget(self),8)
 
         
         self.show()
@@ -361,6 +411,14 @@ class JanelaPlot(QMainWindow):
         num = self.normtext.toPlainText()
         print(num)
         self.janelaPrincipal.normalizacaoFFT = float(num)
+
+    def escolher_canal(self):
+        num = self.channelText.toPlainText()
+        self.janelaPrincipal.FFT_especifico_indice = int(num)
+    
+    def escolher_frequencia(self):
+        num = self.freqText.toPlainText()
+        self.janelaPrincipal.FFT_especifico_freq = int(num)
 
 
 
