@@ -12,6 +12,8 @@ from pylsl import StreamInlet, resolve_stream, resolve_byprop
 from time import sleep
 import matplotlib.pyplot as plt
 from random import choice
+import threading
+import zmq
 
 usar_modelo = False
 if usar_modelo:
@@ -140,6 +142,8 @@ class JanelaInicial(QMainWindow):
         self.buttonLayout.addWidget(self.button)
         self.button_iniciarBCI = QPushButton('Iniciar BCI', self.buttonLayoutWidget)
         self.buttonLayout.addWidget(self.button_iniciarBCI)
+        self.button_conectarUnity = QPushButton('Conectar ao Unity',self.buttonLayoutWidget)
+        self.buttonLayout.addWidget(self.button_conectarUnity)
         self.left_layout.addWidget(self.buttonLayoutWidget)
         self.left_layout.addStretch()
  
@@ -174,6 +178,7 @@ class JanelaInicial(QMainWindow):
         self.button.clicked.connect(self.conectar_LSL)
         #self.button_iniciarBCI.clicked.connect(self.abrir_janela_teste)
         self.button_iniciarBCI.clicked.connect(self.iniciar_bci)
+        self.button_conectarUnity.clicked.connect(self.conectarUnity)
         QtCore.QMetaObject.connectSlotsByName(self)
         #self.show()
 
@@ -261,6 +266,7 @@ class JanelaInicial(QMainWindow):
 
 
         self.label_previsao.setText(str(pred))
+        self.enviarUnity()
 
         # 4. ATUALIZAÇÃO DO GRÁFICO (A mágica acontece aqui)
         # Eixo X é sempre o mesmo (0 a x_size)
@@ -296,6 +302,12 @@ class JanelaInicial(QMainWindow):
 
         self.canvas_FFT.draw_idle()
     
+    def conectarUnity(self):
+        self.unity = UnitySender()
+
+    def enviarUnity(self):
+
+        self.unity.send(str(self.label_previsao))
 
 
     def abrir_janela_teste(self):   
@@ -421,9 +433,6 @@ class JanelaPlot(QMainWindow):
         self.janelaPrincipal.FFT_especifico_freq = int(num)
 
 
-
-
-
 class JanelaTeste(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -449,8 +458,6 @@ class JanelaTeste(QMainWindow):
         if self.t > np.pi: self.t = 0
         self.label.setPalette(self.palette)
         
-
-
 class Janela1(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -496,6 +503,33 @@ class Janela2(QMainWindow):
         self.ax.clear()
         self.ax.plot(self.t,np.sin(self.t))
         self.canvas.draw()
+
+class UnitySender:
+    def __init__(self):
+        self.queue = []
+        self.lock = threading.Lock()
+        self.running = True
+        threading.Thread(target=self.sender_loop, daemon=True).start()
+
+        self.context = zmq.Context()
+        self.socket_pub = self.context.socket(zmq.PUB)
+        self.socket_pub.bind("tcp://*:5555")
+
+    def send(self, msg):
+        with self.lock:
+            self.queue.append(msg)
+
+    def sender_loop(self):
+        import time
+        while self.running:
+            with self.lock:
+                if self.queue:
+                    msg = self.queue.pop(0)
+                    self.socket_pub.send_string(msg)
+            time.sleep(0.01)
+
+    def stop(self):
+        self.running = False
 
 def window():
     app = QApplication(sys.argv)
