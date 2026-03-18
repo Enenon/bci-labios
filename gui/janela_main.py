@@ -1,26 +1,12 @@
-from PyQt5 import QtCore, QtGui
-# from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QLabel, QSizePolicy
-from PyQt5.QtWidgets import * 
-import sys
-import numpy as np
-from scipy.fft import fft
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
+﻿from dependencias import *
 
-import numpy as np
-from pylsl import StreamInlet, resolve_stream, resolve_byprop
-from time import sleep
-import matplotlib.pyplot as plt
-from random import choice
-import threading
-import zmq
 
-usar_modelo = False
-if usar_modelo:
-    from keras.models import load_model
-    from tensorflow.keras.optimizers import Adam
-    import os
-    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+
+import os
+
+from aquisicao import Aquisicao
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 
 
@@ -35,7 +21,8 @@ class JanelaInicial(QMainWindow):
         self.x_size = 1000
         self.epochsize = 721
         self.current_data = np.zeros((self.x_size, self.n_channels))
-        self.limiar = 0.4
+        self.limiar = 0.
+        self.aquisicao = Aquisicao(len_data=self.x_size,num_canais=self.n_channels)
 
         # Setup da UI com layouts (coluna esquerda = controles, coluna direita = visualização expansível)
         self.centralwidget = QWidget(self)
@@ -85,13 +72,13 @@ class JanelaInicial(QMainWindow):
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.frameGrafico.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.Layout_visualizacao.addWidget(self.frameGrafico)
- 
+
         self.ax_seriet.set_title('Série Temporal EEG')
         self.ax_seriet.set_xlabel('Tempo (s)')
         self.frameGrafico.setFrameShape(QFrame.StyledPanel)
         self.frameGrafico.setFrameShadow(QFrame.Raised)
         self.frameGrafico.setObjectName("frameGrafico")
- 
+
         # área de saída abaixo do gráfico
         self.horizontalLayout = QHBoxLayout()
         self.horizontalLayout.setObjectName("horizontalLayout")
@@ -217,16 +204,16 @@ class JanelaInicial(QMainWindow):
         self.normalizacaoFFT_especifico = 1
         self.ax_FFT_especifico.set_title('FFT frequencia especifica')
         self.ax_FFT_especifico.set_xlabel('Tempo(s)')
-        self.ax_FFT_especifico.set_yticks([])
+        #self.ax_FFT_especifico.set_yticks([])
         self.ax_FFT_especifico.set_xlim(0, self.xlim_FFT_especifico)
 
-        self.ax_FFT_especifico.set_ylim(0, 8000) #botei esse 700 pra ficar mais encaixado no grafico
+        self.ax_FFT_especifico.set_ylim(0, 2000) #botei esse 700 pra ficar mais encaixado no grafico
         self.FFT_especifico_array = []
         self.FFT_especifico_indice = 0
-        self.FFT_especifico_freq = 0
+        self.FFT_especifico_freq1 = 0
+        self.FFT_especifico_freq2 = 100
         self.FFT_especifico_frames = 100
         self.line_FFT_especifico, = self.ax_FFT_especifico.plot([], [], lw=1)
-
 
 
     def iniciar_bci(self):
@@ -242,6 +229,7 @@ class JanelaInicial(QMainWindow):
 
     def update_plot(self):
         # Puxa chunk de amostras
+        self.aquisicao.adquirir()
         chunk, _ = self.inlet.pull_chunk(timeout=0.0)
         if not chunk:
            return 
@@ -255,7 +243,8 @@ class JanelaInicial(QMainWindow):
         #print(np.array([self.current_data]).shape)
     
         try:
-            pred = self.predict(np.array([self.current_data[self.x_size - self.epochsize:]])).numpy()[0][0]
+            #pred = self.predict(np.array([self.current_data[self.x_size - self.epochsize:]])).numpy()[0][0]
+            pred = self.predict(np.array([self.aquisicao.current_data[self.x_size - self.epochsize:]])).numpy()[0][0]
             if pred < self.limiar:
                 label = 'T1'
             elif pred > 1 - self.limiar:
@@ -266,7 +255,10 @@ class JanelaInicial(QMainWindow):
 
 
         self.label_previsao.setText(str(pred))
-        self.enviarUnity()
+        try:
+            self.enviarUnity()
+        except:
+            pass
 
         # 4. ATUALIZAÇÃO DO GRÁFICO (A mágica acontece aqui)
         # Eixo X é sempre o mesmo (0 a x_size)
@@ -274,28 +266,31 @@ class JanelaInicial(QMainWindow):
         
         for i, line in enumerate(self.lines):
             # Pegamos os dados do canal i
-            channel_data = self.current_data[:, i]
+            '''channel_data = self.current_data[:, i]'''
             
             # Adicionamos um offset para criar o efeito "Waterfall" (um canal em cima do outro)
             # Sem isso, todos os 16 canais ficariam misturados no zero.
             offset = i * self.escala_visual
            
-            line.set_data(x_data, channel_data + offset)
+            '''line.set_data(x_data, channel_data + offset)'''
+            line.set_data(x_data, self.aquisicao.current_data[:,i] + offset)
 
-            segment_FFT = channel_data[-self.xlim_FFT*2:]
+            '''segment_FFT = channel_data[-self.xlim_FFT*2:]
             fft_data = fft(segment_FFT)
-            fft_mag = np.abs(fft_data)[:len(segment_FFT)//2]   # magnitude, só metade positiva
-            freqs = np.arange(len(fft_mag))            # índices (ou converta p/ Hz com fs)
-            self.lines_fft[i].set_data(freqs, fft_mag/self.normalizacaoFFT)
+            fft_mag = np.abs(fft_data)[:len(segment_FFT)//2]   # magnitude, só metade positiva'''
+            freqs = np.arange(len(self.aquisicao.fft_data[:,i]))            # índices (ou converta p/ Hz com fs)
+            self.lines_fft[i].set_data(freqs, self.aquisicao.fft_data[:,i]/self.normalizacaoFFT)
 
             if i == self.FFT_especifico_indice:
-                self.FFT_especifico_array.append(fft_data[self.FFT_especifico_freq])
+                FFT_espec_range_media = np.mean(self.aquisicao.fft_data[:,i][self.FFT_especifico_freq1:self.FFT_especifico_freq2])
+                self.FFT_especifico_array.append(FFT_espec_range_media)
                 if len(self.FFT_especifico_array) > self.FFT_especifico_frames:
                     self.FFT_especifico_array.pop(0)
-            #self.lines_fft[i].set_data([i for i in range(len(fft_data))],fft_data)
-
-        self.line_FFT_especifico.set_data(np.arange(len(self.FFT_especifico_array)), np.array(self.FFT_especifico_array) / self.normalizacaoFFT_especifico)
-        print(len(self.FFT_especifico_array))
+            #self.lines_fft[i].set_data([i for i in range(len(self.aquisicao.fft_data[:,i]))],self.aquisicao.fft_data[:,i]/self.normalizacaoFFT)
+        print(self.normalizacaoFFT)
+        #self.line_FFT_especifico.set_data(np.arange(len(self.FFT_especifico_array)), np.array(self.FFT_especifico_array) / self.normalizacaoFFT_especifico)
+        self.line_FFT_especifico.set_data(np.arange(len(self.FFT_especifico_array)), self.FFT_especifico_array)
+        #print(len(self.FFT_especifico_array))
         self.canvas_FFT_especifico.draw_idle()
         # Redesenha apenas o canvas
         self.canvas.draw_idle()
@@ -306,8 +301,8 @@ class JanelaInicial(QMainWindow):
         self.unity = UnitySender()
 
     def enviarUnity(self):
+            self.unity.send(str(self.label_previsao))
 
-        self.unity.send(str(self.label_previsao))
 
 
     def abrir_janela_teste(self):   
@@ -337,9 +332,10 @@ class JanelaInicial(QMainWindow):
         self.status_lsl.setText('Procurando...')
         self.status_lsl.setPalette(self.palette_amarela)
         QApplication.processEvents() # <--- isso aplica as mudanças antes da função acabar
-        self.streams = resolve_byprop('type', 'EEG',timeout=3)
-        if self.streams:
-           self.inlet = StreamInlet(self.streams[0])
+        #self.streams = resolve_byprop('type', 'EEG',timeout=3)
+        self.aquisicao.conectar()
+        if self.aquisicao.conectado:
+           self.inlet = StreamInlet(self.aquisicao.streams[0])
            palette = QtGui.QPalette()
            palette.setBrush(QtGui.QPalette.All, QtGui.QPalette.WindowText,QtGui.QBrush(QtGui.QColor(4,150,0)))
            self.status_lsl.setText('Conectado!')
@@ -399,8 +395,10 @@ class JanelaPlot(QMainWindow):
                 self.channelButton = QPushButton('Mudar canal')
                 self.channelButton.clicked.connect(self.escolher_canal)
 
-                self.freqText = QPlainTextEdit(self.centralwidget)
-                self.freqText.setPlainText(str(principal.FFT_especifico_indice))
+                self.freqText1 = QPlainTextEdit(self.centralwidget)
+                self.freqText2 = QPlainTextEdit(self.centralwidget)
+                self.freqText1.setPlainText(str(principal.FFT_especifico_indice))
+                self.freqText2.setPlainText(str(principal.FFT_especifico_indice))
                 self.freqButton = QPushButton('Mudar frequencia')
                 self.freqButton.clicked.connect(self.escolher_frequencia)
 
@@ -412,7 +410,9 @@ class JanelaPlot(QMainWindow):
 
                 self.layoutFreq = QHBoxLayout(self.centralwidget)
                 self.layout1.addLayout(self.layoutFreq,2)
-                self.layoutFreq.addWidget(self.freqText,1)
+
+                self.layoutFreq.addWidget(self.freqText1,1)
+                self.layoutFreq.addWidget(self.freqText2,1)
                 self.layoutFreq.addWidget(self.freqButton,1)
                 self.layoutFreq.addWidget(QWidget(self),8)
 
@@ -421,7 +421,7 @@ class JanelaPlot(QMainWindow):
 
     def normalizar(self):
         num = self.normtext.toPlainText()
-        print(num)
+        #print(num)
         self.janelaPrincipal.normalizacaoFFT = float(num)
 
     def escolher_canal(self):
@@ -429,8 +429,13 @@ class JanelaPlot(QMainWindow):
         self.janelaPrincipal.FFT_especifico_indice = int(num)
     
     def escolher_frequencia(self):
-        num = self.freqText.toPlainText()
-        self.janelaPrincipal.FFT_especifico_freq = int(num)
+        num1 = self.freqText1.toPlainText()
+        num2  = self.freqText2.toPlainText()
+        self.janelaPrincipal.FFT_especifico_freq1 = int(num1)
+        self.janelaPrincipal.FFT_especifico_freq2 = int(num2)
+
+
+
 
 
 class JanelaTeste(QMainWindow):
@@ -531,11 +536,13 @@ class UnitySender:
     def stop(self):
         self.running = False
 
-def window():
-    app = QApplication(sys.argv)
-    win = JanelaInicial()
-    win.show()
 
-    sys.exit(app.exec_())
 
-window()
+if __name__ == '__main__':
+    def window():
+        app = QApplication(sys.argv)
+        win = JanelaInicial()
+        win.show()
+
+        sys.exit(app.exec_())
+    window()
