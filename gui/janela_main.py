@@ -13,127 +13,56 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 class JanelaInicial(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.resize(672, 446)
+        self.resize(1250,850)
         self.setWindowTitle('BCI Labios')
-        # --- Configurações de Dados ---
-        self.canais = ['C3..', 'C4..', 'Fp1.', 'Fp2.', 'F7..', 'F3..', 'F4..', 'F8..','T7..', 'T8..', 'P7..', 'P3..', 'P4..', 'P8..', 'O1..', 'O2..']
-        self.n_channels = len(self.canais)
-        self.x_size = 1000
-        self.epochsize = 721
-        self.current_data = np.zeros((self.x_size, self.n_channels))
-        self.limiar = 0.
-        self.aquisicao = Aquisicao(len_data=self.x_size,num_canais=self.n_channels)
+        self.aplicar_estilo_escuro()
 
-        # Setup da UI com layouts (coluna esquerda = controles, coluna direita = visualização expansível)
+        # --- Variáveis de Sistema ---
+        self.unity = None
+        self.inlet = None
+        self.model = None
+        self.conectado_unity = False
+        self.sessao_iniciada = False
+        self.sincronizado = False
+        self.modo_teste_unity = False 
+        
+        # --- Configs Hardware ---
+        self.canais = ['C3', 'C4', 'Fp1', 'Fp2', 'F7', 'F3', 'F4', 'F8','T7', 'T8', 'P7', 'P3', 'P4', 'P8', 'O1', 'O2']
+        self.n_channels = len(self.canais) 
+        self.x_size = 500 
+        
+        # --- BUFFER DA ESTEIRA ---
+        self.buffer_sobra = [] 
+        
+        
+        # --- VISUALIZAÇÃO ---
+        self.current_data_visual = np.zeros((self.x_size, self.n_channels))
+        self.fs = 250.0  
+        self.escala_visual = 150 
+        self.escala_auto = False
+        self.fft_smooth_factor = 0.0
+        self.fft_buffer_history = np.zeros((self.n_channels, self.x_size//2))
+
+        self.aquisicao = Aquisicao(len_data=self.x_size,num_canais=self.n_channels,xlim_FFT=self.x_size//2,smooth_factor=self.fft_smooth_factor)
+
+        # --- LAYOUT ---
         self.centralwidget = QWidget(self)
         self.setCentralWidget(self.centralwidget)
         self.main_layout = QHBoxLayout(self.centralwidget)
-        self.main_layout.setContentsMargins(8, 8, 8, 8)
+        
+        self.panel_left = QFrame()
+        self.panel_left.setFixedWidth(320)
+        self.layout_left = QVBoxLayout(self.panel_left)
+        self.setup_painel_esquerdo()
+        self.main_layout.addWidget(self.panel_left)
 
-        # coluna esquerda (controles) - não expande
-        self.left_widget = QWidget(self.centralwidget)
-        self.left_layout = QVBoxLayout(self.left_widget)
-        self.left_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.addWidget(self.left_widget, 0)
+        self.panel_right = QWidget()
+        self.layout_right = QVBoxLayout(self.panel_right)
+        self.tabs = QTabWidget()
+        self.setup_tabs()
+        self.layout_right.addWidget(self.tabs)
+        self.main_layout.addWidget(self.panel_right, 1)
 
-        # coluna direita (visualização) - expande com a janela
-        self.visual_widget = QWidget(self.centralwidget)
-        self.Layout_visualizacao = QVBoxLayout(self.visual_widget)
-        self.Layout_visualizacao.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.addWidget(self.visual_widget, 1)
- 
-        # --- CONFIGURAÇÃO OTIMIZADA DO MATPLOTLIB ---
-        self.frameGrafico = QFrame(self.visual_widget)
-        self.frameGrafico_layout = QVBoxLayout(self.frameGrafico)
-        
-        # Criamos a figura uma única vez
-        self.figure = Figure(figsize=(5, 3), dpi=100)
-        self.canvas = FigureCanvas(self.figure)
-        self.ax_seriet = self.figure.add_subplot(111)
-        
-        # Configuração estética do gráfico
-        self.ax_seriet.set_title('Série Temporal EEG (Real-time)')
-        self.ax_seriet.set_xlabel('Amostras')
-        self.ax_seriet.set_yticks([]) # Remove eixo Y numérico para limpar
-        self.ax_seriet.set_xlim(0, self.x_size)
-        # Ajusta limite Y para caber todos os canais empilhados (waterfall)
-        self.escala_visual = 750 # Fator para separar as linhas visualmente
-        self.ax_seriet.set_ylim(-self.escala_visual, self.n_channels * self.escala_visual + self.escala_visual - 700) #botei esse 700 pra ficar mais encaixado no grafico
-        
-        # CRUCIAL: Criamos as linhas (artistas) vazias agora e guardamos as referências
-        self.lines = []
-        for i in range(self.n_channels):
-           # Plotamos uma linha vazia para cada canal
-           line, = self.ax_seriet.plot([0,self.epochsize], 2*[i*self.escala_visual], lw=1) 
-           self.lines.append(line)
-
-        self.frameGrafico_layout.addWidget(self.canvas)
-        # permitir expansão do canvas/frame
-        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.frameGrafico.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.Layout_visualizacao.addWidget(self.frameGrafico)
-
-        self.ax_seriet.set_title('Série Temporal EEG')
-        self.ax_seriet.set_xlabel('Tempo (s)')
-        self.frameGrafico.setFrameShape(QFrame.StyledPanel)
-        self.frameGrafico.setFrameShadow(QFrame.Raised)
-        self.frameGrafico.setObjectName("frameGrafico")
-
-        # área de saída abaixo do gráfico
-        self.horizontalLayout = QHBoxLayout()
-        self.horizontalLayout.setObjectName("horizontalLayout")
-        self.comboBoxPlots = QComboBox(self.visual_widget)
-        self.comboBoxPlots.addItem('Série temporal')
-        self.comboBoxPlots.addItem('FFT')
-        self.comboBoxPlots.addItem('FFT frequência específica')
-        self.horizontalLayout.addWidget(self.comboBoxPlots)
-        self.button_abrirjanela = QPushButton('Abir em nova janela',self.visual_widget)
-        self.horizontalLayout.addWidget(self.button_abrirjanela)
-        self.saida = QLabel('Saída:', self.visual_widget)
-        self.saida.setObjectName("saida")
-        self.horizontalLayout.addWidget(self.saida)
-        self.label_previsao = QLabel('0', self.visual_widget)
-        self.label_previsao.setObjectName("label_previsao")
-        
-        self.button_abrirjanela.clicked.connect(self.abrir_janela_plot)
-        self.horizontalLayout.addWidget(self.label_previsao)
-        
-        self.Layout_visualizacao.addLayout(self.horizontalLayout)
-        
-        # aqui ficará a imagem do cérebro
-        self.frameCerebro = QFrame(self.visual_widget)
-        self.frameCerebro.setFrameShape(QFrame.StyledPanel)
-        self.frameCerebro.setFrameShadow(QFrame.Raised)
-        self.frameCerebro.setObjectName("frameCerebro")
-        self.Layout_visualizacao.addWidget(self.frameCerebro)
- 
-        # Widget com status (na coluna esquerda)
-        self.formLayoutWidget = QWidget(self.left_widget)
-        self.formLayout = QFormLayout(self.formLayoutWidget)
-        self.formLayout.setContentsMargins(0, 0, 0, 0)
-        self.label_status_modelo = QLabel('Status do modelo: ', self.formLayoutWidget)
-        self.formLayout.setWidget(0, QFormLayout.LabelRole, self.label_status_modelo)
-        self.modelo_infos = QLabel('Nenhum modelo carregado', self.formLayoutWidget)
-        self.modelo_infos.setWordWrap(True)
-        self.formLayout.setWidget(0, QFormLayout.FieldRole, self.modelo_infos)
-        self.label_status_lsl = QLabel('Status do LSL: ', self.formLayoutWidget)
-        self.formLayout.setWidget(1, QFormLayout.LabelRole, self.label_status_lsl)
-        self.status_lsl = QLabel('Desconectado', self.formLayoutWidget)
-        self.formLayout.setWidget(1, QFormLayout.FieldRole, self.status_lsl)
-        self.left_layout.addWidget(self.formLayoutWidget)
- 
-        # botões (embaixo do form na coluna esquerda)
-        self.buttonLayoutWidget = QWidget(self.left_widget)
-        self.buttonLayout = QVBoxLayout(self.buttonLayoutWidget)
-        self.button = QPushButton('Conectar LSL', self.buttonLayoutWidget)
-        self.buttonLayout.addWidget(self.button)
-        self.button_iniciarBCI = QPushButton('Iniciar BCI', self.buttonLayoutWidget)
-        self.buttonLayout.addWidget(self.button_iniciarBCI)
-        self.button_conectarUnity = QPushButton('Conectar ao Unity',self.buttonLayoutWidget)
-        self.buttonLayout.addWidget(self.button_conectarUnity)
-        self.left_layout.addWidget(self.buttonLayoutWidget)
-        self.left_layout.addStretch()
- 
         # Paleta vermelha para 'Desconectado'
         self.palette_vermelha = QtGui.QPalette()
         brush_vermelho = QtGui.QBrush(QtGui.QColor(255, 0, 4))
@@ -148,73 +77,272 @@ class JanelaInicial(QMainWindow):
         self.palette_verde = QtGui.QPalette()
         brush_verde = QtGui.QBrush(QtGui.QColor(4, 150, 0))
         self.palette_verde.setBrush(QtGui.QPalette.All, QtGui.QPalette.WindowText, brush_verde)
-        self.status_lsl.setPalette(self.palette_vermelha)
+        #self.lbl_lsl.setPalette(self.palette_vermelha)
 
         
-        self.setStatusBar(QStatusBar(self))
 
-        self.menubar = self.menuBar()
 
-        self.menubar.arquivo = self.menubar.addMenu("Arquivo")
-        self.menubar.modelo = self.menubar.arquivo.addMenu("Modelo")
-        self.menubar.addmodelo = self.menubar.modelo.addAction("Importar modelo")
-        self.treinar_modelo = self.menubar.addAction("Treinar modelo")
-        
-        self.menubar.addmodelo.triggered.connect(self.abrir_modelo)
-        self.treinar_modelo.triggered.connect(self.abrir_janela_teste)
-        self.button.clicked.connect(self.conectar_LSL)
-        #self.button_iniciarBCI.clicked.connect(self.abrir_janela_teste)
-        self.button_iniciarBCI.clicked.connect(self.iniciar_bci)
-        self.button_conectarUnity.clicked.connect(self.conectarUnity)
-        QtCore.QMetaObject.connectSlotsByName(self)
-        #self.show()
+    def aplicar_estilo_escuro(self):
+        qss = """
+        QMainWindow, QWidget { background-color: #2b2b2b; color: #ffffff; font-family: 'Segoe UI', Arial; }
+        QGroupBox { border: 1px solid #444; border-radius: 5px; margin-top: 10px; font-weight: bold; background-color: #2b2b2b; }
+        QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 5px; background-color: #2b2b2b; color: #aaaaaa; }
+        QPushButton { background-color: #3c3f41; border: 1px solid #555; border-radius: 4px; padding: 5px; color: white; }
+        QPushButton:hover { background-color: #484b4d; }
+        QTabWidget::pane { border: 1px solid #444; background-color: #2b2b2b; }
+        QTabBar::tab { background: #2b2b2b; color: #888888; padding: 8px 25px; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; font-weight: bold; }
+        QTabBar::tab:selected { background: #3c3f41; color: #ffffff; border-bottom: 3px solid #00bcd4; }
+        QComboBox, QSpinBox, QDoubleSpinBox { background: #3c3f41; border: 1px solid #555; padding: 3px; color: white; }
+        QProgressBar { border: 1px solid #555; text-align: center; color: white; }
+        QProgressBar::chunk { background-color: #00bcd4; }
+        QCheckBox { color: white; spacing: 5px; }
+        QCheckBox::indicator { width: 15px; height: 15px; }
+        """
+        self.setStyleSheet(qss)
 
-        # O plot da FFT é idêntico ao da série temporal
+    def setup_ui_controls(self):
+        self.lbl_lsl = QLabel('LSL: desconectado'); self.lbl_unity = QLabel('Unity: desconectado');
+        self.lbl_model = QLabel('Modelo: nenhum')
 
-        self.figure_FFT = Figure(figsize=(5, 3), dpi=100)
-        self.canvas_FFT = FigureCanvas(self.figure_FFT)
+        self.layout_left.addWidget(self.lbl_lsl)
+        self.layout_left.addWidget(self.lbl_unity)
+        self.layout_left.addWidget(self.lbl_model)
 
-        self.ax_fft = self.figure_FFT.add_subplot(111) # subplot com 1 linha e 1 coluna no índice 1
-        
-        self.escala_FFT = 200
-        self.xlim_FFT = 200
-        self.normalizacaoFFT = 1
-        self.ax_fft.set_title('Transformada de Fourier')
-        self.ax_fft.set_xlabel('Frequencia')
+        self.btn_lsl = QPushButton('Conectar LSL'); self.btn_lsl.clicked.connect(self.conectar_LSL)
+        self.btn_unity = QPushButton('Conectar Unity'); self.btn_unity.clicked.connect(self.conectar_Unity)
+        self.btn_iniciar = QPushButton('Iniciar BCI'); self.btn_iniciar.clicked.connect(self.toggle_bci)
+
+        self.layout_left.addWidget(self.btn_lsl)
+        self.layout_left.addWidget(self.btn_unity)
+        self.layout_left.addWidget(self.btn_iniciar)
+
+        self.label_previsao = QLabel('--', alignment=QtCore.Qt.AlignCenter)
+        self.label_previsao.setFont(QtGui.QFont('Arial', 20, QtGui.QFont.Bold))
+        self.layout_left.addWidget(self.label_previsao)
+        self.layout_left.addStretch()
+
+    def setup_tabs(self):
+        self.tab_time = QWidget()
+        l_time = QVBoxLayout(self.tab_time)
+        tb_time = QHBoxLayout()
+        self.combo_scale = QComboBox(); self.combo_scale.addItems(["Auto", "50 uV", "100 uV", "200 uV", "400 uV"])
+        self.combo_scale.setCurrentText("200 uV")
+        self.combo_scale.currentTextChanged.connect(lambda t: setattr(self, 'escala_auto', True) if t=="Auto" else (setattr(self, 'escala_auto', False), setattr(self, 'escala_visual', int(t.split()[0])), self.atualizar_limites_temporal()))
+        tb_time.addWidget(QLabel("Escala:")); tb_time.addWidget(self.combo_scale); tb_time.addStretch()
+        l_time.addLayout(tb_time)
+
+        self.fig_time = Figure(figsize=(5,3), dpi=100, facecolor='#ffffff')
+        self.can_time = FigureCanvas(self.fig_time)
+        self.setup_grafico_temporal()
+        l_time.addWidget(self.can_time)
+        self.tabs.addTab(self.tab_time, "Série Temporal")
+
+        self.tab_fft = QWidget()
+        l_fft = QVBoxLayout(self.tab_fft)
+        tb_fft = QHBoxLayout()
+        self.spin_smooth = QDoubleSpinBox(); self.spin_smooth.setRange(0, 0.99); self.spin_smooth.setSingleStep(0.1)
+        self.spin_smooth.valueChanged.connect(self.mudar_smoothfactor)
+
+        tb_fft.addWidget(QLabel("Smooth:")); tb_fft.addWidget(self.spin_smooth); tb_fft.addStretch()
+        l_fft.addLayout(tb_fft)
+
+        self.fig_fft = Figure(figsize=(5,3), dpi=100, facecolor='#ffffff')
+        self.can_fft = FigureCanvas(self.fig_fft)
+        self.setup_grafico_fft()
+        l_fft.addWidget(self.can_fft)
+        self.tabs.addTab(self.tab_fft, "FFT")
+
+    def mudar_smoothfactor(self):
+        self.aquisicao.fft_smooth_factor = self.spin_smooth.value()
+
+    def setup_grafico_temporal(self):
+        self.ax_time = self.fig_time.add_subplot(111)
+        self.fig_time.patch.set_facecolor('#ffffff'); self.ax_time.set_facecolor('#ffffff')
+        self.ax_time.tick_params(colors='#333333'); self.ax_time.set_xlim(0, self.x_size); self.ax_time.set_yticks([])
+        for spine in self.ax_time.spines.values(): spine.set_color('#aaaaaa')
+        colors = ['#555555', '#8959a8', '#3e999f', '#71c671', '#e8c346', '#e68136', '#d84e4e', '#8c564b']
+        self.lines_time = []; self.rms_texts = []
+        for i in range(self.n_channels):
+            l, = self.ax_time.plot([],[], lw=1.2, color=colors[i%8])
+            self.lines_time.append(l)
+            self.rms_texts.append(self.ax_time.text(self.x_size+10, 0, "", fontsize=9, color='#333333'))
+        self.atualizar_limites_temporal()
+
+    def setup_grafico_fft(self):
+        self.ax_fft = self.fig_fft.add_subplot(111)
+        self.fig_fft.patch.set_facecolor('#ffffff'); self.ax_fft.set_facecolor('#ffffff')
+        self.ax_fft.tick_params(colors='#333333', which='both'); self.ax_fft.set_yscale('log')
+        self.ax_fft.set_ylim(0.1, 100); self.ax_fft.set_xlim(0, 60)
+        self.ax_fft.grid(True, which='both', color='#dddddd', alpha=0.8)
+        self.ax_fft.set_xlabel('Freq (Hz)', color='#555555'); self.ax_fft.set_ylabel('uV', color='#555555')
+        for spine in self.ax_fft.spines.values(): spine.set_color('#aaaaaa')
+        colors = ['#555555', '#8959a8', '#3e999f', '#71c671', '#e8c346', '#e68136', '#d84e4e', '#8c564b']
+        self.lines_fft = [self.ax_fft.plot([],[], lw=1.5, alpha=0.8, color=colors[i%8])[0] for i in range(self.n_channels)]
+
+    def atualizar_limites_temporal(self):
+        top = self.n_channels * self.escala_visual
+        self.ax_time.set_ylim(-self.escala_visual, top + self.escala_visual)
+    def setup_graficos(self):
+        self.fig_time = Figure(figsize=(6, 3), dpi=100, facecolor='#ffffff')
+        self.canvas_time = FigureCanvas(self.fig_time)
+        self.ax_time = self.fig_time.add_subplot(111)
+        self.ax_time.set_xlim(0, self.x_size)
+        self.ax_time.set_ylim(-self.escala_visual, self.n_channels * self.escala_visual)
+        self.ax_time.set_yticks([])
+
+        self.lines_time = []
+        x = np.arange(self.x_size)
+        for i in range(self.n_channels):
+            line, = self.ax_time.plot(x, np.zeros(self.x_size), lw=1.0)
+            self.lines_time.append(line)
+
+        self.layout_right.addWidget(self.canvas_time)
+
+        self.fig_fft = Figure(figsize=(6, 3), dpi=100, facecolor='#ffffff')
+        self.canvas_fft = FigureCanvas(self.fig_fft)
+        self.ax_fft = self.fig_fft.add_subplot(111)
+        self.ax_fft.set_yscale('log')
+        self.ax_fft.set_xlim(0, self.fs / 2)
+        self.ax_fft.set_ylim(1e-2, 1e3)
         self.ax_fft.set_yticks([])
-        self.ax_fft.set_xlim(0, self.xlim_FFT)
-
-        self.ax_fft.set_ylim(0, self.n_channels * self.escala_FFT + self.escala_FFT - 700) #botei esse 700 pra ficar mais encaixado no grafico
 
         self.lines_fft = []
-        for i in range(self.n_channels):
-           # Plotamos uma linha vazia para cada canal
-           line_fft, = self.ax_fft.plot([0,self.xlim_FFT], 2*[0], lw=1) 
-           self.lines_fft.append(line_fft)
+        freq_bins = np.linspace(0, self.fs/2, self.aquisicao.fft_len//2+1)
+        for _ in range(self.n_channels):
+            line, = self.ax_fft.plot(freq_bins, np.zeros_like(freq_bins), alpha=0.5)
+            self.lines_fft.append(line)
 
-        # plot da serie temporal de uma frequencia
+        self.layout_right.addWidget(self.canvas_fft)
 
-        self.figure_FFT_especifico = Figure(figsize=(5, 3), dpi=100)
-        self.canvas_FFT_especifico = FigureCanvas(self.figure_FFT_especifico)
+    def setup_menu(self):
+        menu = self.menuBar().addMenu('Arquivo')
+        menu.addAction('Carregar Modelo').triggered.connect(self.carregar_modelo)
 
-        self.ax_FFT_especifico = self.figure_FFT_especifico.add_subplot(111) # subplot com 1 linha e 1 coluna no índice 1
+    def setup_painel_esquerdo(self):
+        lbl_titulo = QLabel("CONTROLES")
+        lbl_titulo.setFont(QtGui.QFont("Segoe UI", 12, QtGui.QFont.Bold))
+        lbl_titulo.setAlignment(QtCore.Qt.AlignCenter)
+        self.layout_left.addWidget(lbl_titulo)
+
+        # Status
+        group_conn = QGroupBox("Conexões")
+        form_conn = QFormLayout()
+        self.lbl_lsl = QLabel("Desconectado"); self.lbl_lsl.setStyleSheet("color: #ff5555;")
+        self.lbl_unity = QLabel("Desconectado"); self.lbl_unity.setStyleSheet("color: #ff5555;")
+        self.lbl_model = QLabel("Nenhum"); self.lbl_model.setStyleSheet("color: gray;")
+        form_conn.addRow("LSL:", self.lbl_lsl)
+        form_conn.addRow("Unity:", self.lbl_unity)
+        form_conn.addRow("IA:", self.lbl_model)
+        group_conn.setLayout(form_conn)
+        self.layout_left.addWidget(group_conn)
+
+        # --- SHAPE MANUAL ---
+        group_shape = QGroupBox("Shape do Modelo")
+        layout_shape = QFormLayout()
+        self.spin_shape_time = QSpinBox(); self.spin_shape_time.setRange(10, 5000); self.spin_shape_time.setValue(721); self.spin_shape_time.setSuffix(" pts")
+        self.spin_shape_ch = QSpinBox(); self.spin_shape_ch.setRange(1, 32); self.spin_shape_ch.setValue(16); self.spin_shape_ch.setSuffix(" ch")
+        layout_shape.addRow("Time Steps:", self.spin_shape_time)
+        layout_shape.addRow("Canais:", self.spin_shape_ch)
+        group_shape.setLayout(layout_shape)
+        self.layout_left.addWidget(group_shape)
+
+        # --- CONTROLES E BOTÕES ---
+        self.layout_left.addSpacing(10)
         
-        self.escala_FFT_especifico = 200
-        self.xlim_FFT_especifico = 200
-        self.normalizacaoFFT_especifico = 1
-        self.ax_FFT_especifico.set_title('FFT frequencia especifica')
-        self.ax_FFT_especifico.set_xlabel('Tempo(s)')
-        #self.ax_FFT_especifico.set_yticks([])
-        self.ax_FFT_especifico.set_xlim(0, self.xlim_FFT_especifico)
+        self.chk_teste_unity = QCheckBox("Modo Teste Unity (Aleatório)")
+        self.chk_teste_unity.setStyleSheet("color: #ff9800; font-weight: bold;")
+        self.chk_teste_unity.setToolTip("Gera sinais aleatórios para testar o Unity sem precisar do LSL ou Capacete.")
+        self.layout_left.addWidget(self.chk_teste_unity)
 
-        self.ax_FFT_especifico.set_ylim(0, 2000) #botei esse 700 pra ficar mais encaixado no grafico
-        self.FFT_especifico_array = []
-        self.FFT_especifico_indice = 0
-        self.FFT_especifico_freq1 = 0
-        self.FFT_especifico_freq2 = 100
-        self.FFT_especifico_frames = 100
-        self.line_FFT_especifico, = self.ax_FFT_especifico.plot([], [], lw=1)
+        self.btn_lsl = QPushButton("📡 1. Conectar LSL"); self.btn_lsl.clicked.connect(self.conectar_LSL)
+        self.btn_unity = QPushButton("🎮 2. Conectar Unity"); self.btn_unity.clicked.connect(self.conectar_Unity)
+        self.btn_iniciar = QPushButton("▶ 3. Iniciar Sessão"); self.btn_iniciar.setStyleSheet("background-color: #2e7d32; font-weight: bold;")
+        self.btn_iniciar.clicked.connect(self.iniciar_sessao)
+        #self.btn_iniciar.clicked.connect(self.toggle_bci)
+        
+        self.layout_left.addWidget(self.btn_lsl)
+        self.layout_left.addWidget(self.btn_unity)
+        self.layout_left.addWidget(self.btn_iniciar)
 
+
+        # Resultado
+        group_res = QGroupBox("Predição Atual")
+        layout_res = QVBoxLayout()
+        self.lbl_predicao = QLabel("--"); self.lbl_predicao.setFont(QtGui.QFont("Arial", 16, QtGui.QFont.Bold)); self.lbl_predicao.setAlignment(QtCore.Qt.AlignCenter)
+        self.lbl_feedback = QLabel(""); self.lbl_feedback.setAlignment(QtCore.Qt.AlignCenter)
+        layout_res.addWidget(self.lbl_predicao); layout_res.addWidget(self.lbl_feedback)
+        group_res.setLayout(layout_res)
+        self.layout_left.addWidget(group_res)
+
+        self.layout_left.addStretch()
+
+    def toggle_bci(self):
+        if self.timer.isActive():
+            self.timer.stop(); self.btn_iniciar.setText('Iniciar BCI')
+        else:
+            self.timer.start(20); self.btn_iniciar.setText('Parar BCI')
+
+    def update_loop(self):
+        if self.modo_teste_unity:
+            data = np.random.randn(3, self.n_channels_hardware) * 50 
+            self.sincronizado = True
+            self.buffer_sobra.extend(data)
+            self.current_data_visual = np.roll(self.current_data_visual, -3, axis=0)
+            self.current_data_visual[-3:, :] = data
+        else:
+            chunk = self.aquisicao.adquirir()
+            if chunk is None:
+                return
+
+        x = np.arange(self.x_size)
+        for i, line in enumerate(self.lines_time):
+            channel = self.aquisicao.current_data[:, i]
+            offset = i * self.escala_visual
+            line.set_data(x, channel + offset)
+
+        #self.canvas_time.draw_idle()
+
+        '''freq, fft_data = self.aquisicao.compute_fft()
+        for i, line in enumerate(self.lines_fft):
+            line.set_data(freq, fft_data[:, i])'''
+        #self.canvas_fft.draw_idle()
+
+        self.atualizar_graficos_visuais()
+
+        if self.model is not None:
+            epoch = self.aquisicao.get_epoch(self.epoch_size)
+            norm = (epoch - epoch.min()) / (epoch.ptp() + 1e-8)
+            try:
+                pred = self.model.predict(norm[np.newaxis, ...], verbose=0)[0]
+                if pred.shape[-1] == 3:
+                    idx = int(np.argmax(pred))
+                    label = ['ESQUERDA', 'DIREITA', 'REPOUSO'][idx]
+                else:
+                    idx = int(pred[0] > 0.5)
+                    label = ['REPOUSO', 'MOV']['idx']
+                self.label_previsao.setText(label)
+                if self.unity:
+                    commands = ['LEFT', 'RIGHT', 'REST']
+                    self.unity.send(commands[idx if pred.shape[-1] == 3 else idx])
+            except Exception:
+                self.label_previsao.setText('Modelo erro')
+
+    def iniciar_sessao(self):
+        # MODO TESTE
+        self.modo_teste_unity = self.chk_teste_unity.isChecked()
+        
+        if self.modo_teste_unity:
+            if not self.conectado_unity:
+                ret = QMessageBox.question(self, "Unity não conectado", "O Unity não está conectado. Deseja iniciar o teste assim mesmo?", QMessageBox.Yes | QMessageBox.No)
+                if ret == QMessageBox.No: return
+        else:
+            if not self.inlet: return QMessageBox.warning(self, "Aviso", "Conecte o LSL ou ative o Modo Teste!")
+        
+        self.sessao_iniciada = True
+        self.btn_iniciar.setEnabled(False)
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.update_loop)
+        self.timer.start(10)
 
     def iniciar_bci(self):
         # Inicia ao detectar dados não-zero
@@ -229,16 +357,13 @@ class JanelaInicial(QMainWindow):
 
     def update_plot(self):
         # Puxa chunk de amostras
-        self.aquisicao.adquirir()
-        chunk, _ = self.inlet.pull_chunk(timeout=0.0)
-        if not chunk:
-           return 
+        if self.aquisicao.adquirir() == None:
+            return
+        
 
         # 2. Atualização do Buffer Circular (Numpy é mais rápido que lista append/pop)
         # Desloca os dados antigos para a esquerda e insere os novos no final
-        new_len = len(chunk)
-        self.current_data = np.roll(self.current_data, -new_len, axis=0)
-        self.current_data[-new_len:, :] = chunk
+        self.atualizar_graficos_visuais()
         #print(self.current_data.shape)
         #print(np.array([self.current_data]).shape)
     
@@ -297,7 +422,7 @@ class JanelaInicial(QMainWindow):
 
         self.canvas_FFT.draw_idle()
     
-    def conectarUnity(self):
+    def conectar_Unity(self):
         self.unity = UnitySender()
 
     def enviarUnity(self):
@@ -329,27 +454,46 @@ class JanelaInicial(QMainWindow):
         print("Aguardando stream EEG...")
         print('mudando a cor da paleta')
 
-        self.status_lsl.setText('Procurando...')
-        self.status_lsl.setPalette(self.palette_amarela)
+        self.lbl_lsl.setText('Procurando...')
+        self.lbl_lsl.setPalette(self.palette_amarela)
         QApplication.processEvents() # <--- isso aplica as mudanças antes da função acabar
         #self.streams = resolve_byprop('type', 'EEG',timeout=3)
         self.aquisicao.conectar()
         if self.aquisicao.conectado:
-           self.inlet = StreamInlet(self.aquisicao.streams[0])
+           self.inlet = self.aquisicao.inlet
            palette = QtGui.QPalette()
            palette.setBrush(QtGui.QPalette.All, QtGui.QPalette.WindowText,QtGui.QBrush(QtGui.QColor(4,150,0)))
-           self.status_lsl.setText('Conectado!')
-           self.status_lsl.setPalette(self.palette_verde)
+           self.lbl_lsl.setText('Conectado!')
+           self.lbl_lsl.setPalette(self.palette_verde)
         else:
            print('Não achou conexão')
-           self.status_lsl.setPalette(self.palette_vermelha)
-           self.status_lsl.setText('Desconectado')
+           self.lbl_lsl.setPalette(self.palette_vermelha)
+           self.lbl_lsl.setText('Desconectado')
 
     def abrir_janela_plot(self):
         widget_escolhido = self.comboBoxPlots.currentIndex()
 
         self.janela_plot = JanelaPlot(self,widget_escolhido)
 
+    def atualizar_graficos_visuais(self):
+        self.current_data_visual = self.aquisicao.current_data.copy()
+        if self.tabs.currentIndex() == 0: 
+            if self.escala_auto:
+                amp = np.ptp(self.current_data_visual, axis=0).max()
+                if amp > 1: self.escala_visual = amp * 0.8; self.atualizar_limites_temporal()
+            x = np.arange(self.x_size)
+            for i, l in enumerate(self.lines_time):
+                off = i * self.escala_visual
+                y = self.current_data_visual[:, i] - np.mean(self.current_data_visual[:, i])
+                l.set_data(x, y + off)
+                rms = np.sqrt(np.mean(y**2))
+                self.rms_texts[i].set_text(f"{rms:.2f} uVrms"); self.rms_texts[i].set_position((self.x_size+10, off))
+            self.can_time.draw_idle()
+        elif self.tabs.currentIndex() == 1: 
+            xf = np.linspace(0, self.fs/2, self.x_size//2)
+            for i, l in enumerate(self.lines_fft):
+                l.set_data(xf, self.aquisicao.fft_buffer_history[i])
+            self.can_fft.draw_idle()
 
     def update_FFT(self):
         self.t += self.timer.interval()/100
