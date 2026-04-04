@@ -29,9 +29,12 @@ class Aquisicao:
         if self.conectado:
             chunk, _ = self.inlet.pull_chunk(timeout=0.0)
             if not chunk: return
+            if len(chunk) > self.len_data:  # Se o chunk for maior que o buffer, pegue apenas os últimos dados
+                chunk = chunk[-self.len_data:]
             new_len = len(chunk)
             self.current_data = np.roll(self.current_data, -new_len, axis=0)
             self.current_data[-new_len:, :] = chunk
+            print(new_len,np.array(chunk).shape)
 
             for i in range(self.num_canais):
                 # Pegamos os dados do canal i
@@ -52,7 +55,7 @@ class Aquisicao:
             return None
 
     def predict(self,model):
-        return model.predict(self.fft_data.reshape(1, -1))
+        return model.predict(self.current_data[np.newaxis, :, :])
     
     def compute_fft(self, n_fft=None): #ainda não utilizei mas veio da IA e posso implementar
         if n_fft is None:

@@ -1,7 +1,9 @@
+from pyexpat import model
+
 from dependencias import *
 from aquisicao import Aquisicao
 class JanelaTreino(QMainWindow):
-    def __init__(self):
+    def __init__(self,aquisicao=None):
         super().__init__()
         self.setGeometry(200,200,350,350)
         self.setWindowTitle('Janela Treino')
@@ -22,6 +24,9 @@ class JanelaTreino(QMainWindow):
         self.modelo_infos = QLabel('', self)
         self.layout1.addWidget(self.modelo_infos)
 
+        self.botao_guardar_dados = QCheckBox('Guardar Dados', self)
+        self.layout1.addWidget(self.botao_guardar_dados)
+
         self.botao_iniciar_treino = QPushButton('Iniciar Treino', self)
         self.botao_iniciar_treino.clicked.connect(self.iniciar_treino)
         self.layout1.addWidget(self.botao_iniciar_treino)
@@ -30,6 +35,11 @@ class JanelaTreino(QMainWindow):
         self.palette_verde.setColor(QtGui.QPalette.WindowText, QtGui.QColor(0, 150, 0))  # Verde
         self.palette_vermelha = QtGui.QPalette()
         self.palette_vermelha.setColor(QtGui.QPalette.WindowText, QtGui.QColor(150, 0, 0))  # Vermelho
+
+        if aquisicao:
+            self.aquisicao = aquisicao
+        else:
+            self.aquisicao = Aquisicao(len_data=512, num_canais=16)
 
     def abrir_modelo(self):
         if usar_modelo:
@@ -56,17 +66,23 @@ class JanelaTreino(QMainWindow):
             return
         duration, ok = QInputDialog.getInt(self, 'Duração do Treino', 'Digite a duração em segundos:', 60, 1, 3600, 1)
         if ok:
-            self.training_window = TrainingWindow(self.model, duration)
+            self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao)
+            self.aquisicao.conectar()
+            #self.training_window.show()
+            # substituindo a janela de treino pela janela de fim de treino, para testar a nova janela
+            self.training_window = EndTrainingWindow(self.model)
             self.training_window.show()
 
 
 
 
 class TrainingWindow(QDialog):
-    def __init__(self, model, duration):
+    def __init__(self, model, duration,aquisicao):
         super().__init__()
         self.model = model
+        self.model_weights = model.get_weights() # Armazena os pesos iniciais do modelo
         self.duration = duration
+        self.aquisicao = aquisicao
         self.output_binario = len(self.model.outputs) == 1
         if self.output_binario:
             self.outputs = 2 # para binário
@@ -86,25 +102,26 @@ class TrainingWindow(QDialog):
     def start_countdown(self):
         self.count = 3
         self.timer = QtCore.QTimer()
-        self.timer.timeout.connect(self.update_countdown)
+        self.timer.timeout.connect(self.update_countdown) # atualiza a contagem de 1 em 1 segundo
         self.timer.start(1000)
 
     def update_countdown(self):
         self.countdown_label.setText(str(self.count))
         self.count -= 1
-        if self.count < 0:
+        if self.count < 0: # quando chega a 0, inicia o treino
             self.timer.stop()
             self.start_training()
 
     def start_training(self):
         self.countdown_label.setText("Treinando...")
-        QtCore.QTimer.singleShot(self.duration * 1000, self.training_done)
+        QtCore.QTimer.singleShot(self.duration * 1000, self.training_done) # programa o fim do treino para daqui a "duration" segundos
         self.timer = QtCore.QTimer()
-        self.timer.timeout.connect(self.training)
-        self.timer.start(20)
+        self.timer.timeout.connect(self.training) # chama a função de treino a cada 200ms (5 vezes por segundo)
+        self.timer.start(200)
 
 
     def training_done(self):
+        self.timer.stop()
         self.current_output += 1
         if self.current_output < self.outputs:
             self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs}")
@@ -115,17 +132,65 @@ class TrainingWindow(QDialog):
             self.countdown_label.setText("")
             # Optionally close after a delay
             QtCore.QTimer.singleShot(2000, self.close)
+            if self.model_weights[0] !=self.model.get_weights()[0]:
+                print("Pesos foram atualizados durante o treino.")
+
+            '''for layer in self.model.layers:
+                print(f"Nome da Camada: {layer.name}")
+                
+                # weights[0] são os pesos (W), weights[1] são os bias (b)
+                weights, biases = layer.get_weights()
+                print(f"Pesos: \n{weights}")
+                #print(f"Bias: \n{biases}")
+                print("-" * 20)'''
+
 
     def training(self):
         # Aqui você pode adicionar a lógica de treinamento usando self.model e self.aquisicao
+        if len(self.aquisicao.current_data) != self.model.input_shape[1]:
+            print(self.aquisicao.current_data.shape, self.model.input_shape)
         self.aquisicao.adquirir()
-        pred = self.aquisicao.predict(self.model)
+        #pred = self.aquisicao.predict(self.model)
+        pred = self.model(self.aquisicao.current_data[np.newaxis, :, :])
         if self.output_binario:
             pred = np.argmax(pred)  # Converte para classe binária
         else:
             pred = np.argmax(pred, axis=1)  # Converte para classe multi-classe
         print(pred)
+        if pred == self.current_output:
+            self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Acertou!")
+            #self.label.setPalette(self.palette_verde)
+            self.model.fit(self.aquisicao.current_data[np.newaxis, :, :], np.array([self.current_output]), epochs=1, verbose=0)
+        else:
+            self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Errou!")
+            #self.label.setPalette(self.palette_vermelha)
         pass
+
+class EndTrainingWindow(QDialog):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.current_output = 0
+        self.setWindowTitle('Finalização do Treino')
+        self.resize(600, 400)
+        self.layout = QVBoxLayout(self)
+        self.label = QLabel("Treino concluído!"); self.label.setFont(QtGui.QFont('Arial', 16)); self.label.setAlignment(QtCore.Qt.AlignCenter)
+        self.layout.addWidget(self.label)
+        layoutshape = QFormLayout()
+        self.plainTextEdit = QPlainTextEdit()
+        self.plainTextEdit.setPlaceholderText("Digite o nome do paciente aqui..."); self.plainTextEdit.setFixedHeight(30)
+        layoutshape.addRow('Nome do Paciente:', self.plainTextEdit)
+        self.layout.addLayout(layoutshape)
+        self.button_salvar = QPushButton("Salvar Modelo")
+        self.button_salvar.clicked.connect(self.salvar_modelo)
+        self.layout.addWidget(self.button_salvar)
+
+    def salvar_modelo(self):
+        fname = QFileDialog.getSaveFileName(self, 'Salvar Modelo', '../',"Model files (*.h5)")
+        if fname[0]:
+            self.model.save(fname[0])
+        
+        
 
 
 

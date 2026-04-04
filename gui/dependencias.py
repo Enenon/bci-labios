@@ -1,7 +1,11 @@
 usar_modelo = True
 if usar_modelo:
-    from keras.models import load_model
-    from tensorflow.keras.optimizers import Adam
+    try:
+        from keras.models import load_model
+        from keras.optimizers import Adam
+    except:
+        usar_modelo = False
+        print('Erro ao importar Keras.')
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 # from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QLabel, QSizePolicy
