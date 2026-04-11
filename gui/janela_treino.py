@@ -2,6 +2,73 @@ from pyexpat import model
 
 from dependencias import *
 from aquisicao import Aquisicao
+
+class GaugeWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setMinimumSize(250, 130)
+        self.current_angle = 0.0
+        self.base_angle = 0.0   
+        self.target_angle = 0.0
+        self.incerteza = 0.0    
+        
+        self.anim_timer = QtCore.QTimer()
+        self.anim_timer.timeout.connect(self.update_animation)
+        self.anim_timer.start(30) 
+
+    def set_probabilities(self, prob_left, prob_right, prob_rest):
+        self.target_angle = (prob_right * 60) + (prob_left * -60)
+        confianca_maxima = max(prob_left, prob_right, prob_rest)
+        self.incerteza = 1.0 - confianca_maxima
+
+    def update_animation(self):
+        diff = self.target_angle - self.base_angle
+        if abs(diff) > 0.1:
+            self.base_angle += diff * 0.15
+            
+        tremor_maximo_graus = 15.0 
+        tremor_atual = uniform(-1.0, 1.0) * (self.incerteza * tremor_maximo_graus)
+        self.current_angle = self.base_angle + tremor_atual
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        w, h = self.width(), self.height()
+        center_x, center_y = w / 2, h - 20
+        radius = min(w / 2, h) - 25
+
+        rect = QRectF(center_x - radius, center_y - radius, radius * 2, radius * 2)
+        
+        painter.setPen(QPen(QColor("#00bcd4"), 15, Qt.SolidLine, Qt.FlatCap))
+        painter.drawArc(rect, 120 * 16, 60 * 16) 
+        
+        painter.setPen(QPen(QColor("#888888"), 15, Qt.SolidLine, Qt.FlatCap))
+        painter.drawArc(rect, 60 * 16, 60 * 16)
+        
+        painter.setPen(QPen(QColor("#ff4081"), 15, Qt.SolidLine, Qt.FlatCap))
+        painter.drawArc(rect, 0 * 16, 60 * 16)
+
+        painter.setPen(QColor("#ffffff"))
+        font = QtGui.QFont("Arial", 8, QtGui.QFont.Bold)
+        painter.setFont(font)
+        #painter.drawText(int(center_x - radius - 20), int(center_y), "ESQ")
+        #painter.drawText(int(center_x + radius + 0), int(center_y), "DIR")
+        #painter.drawText(int(center_x - 15), int(center_y - radius - 15), "REP")
+
+        painter.translate(center_x, center_y)
+        painter.rotate(self.current_angle)
+        
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor("#ffffff")))
+        poly = QPolygon([QPoint(-4, 0), QPoint(4, 0), QPoint(0, int(-radius + 5))])
+        painter.drawPolygon(poly)
+        
+        painter.setBrush(QBrush(QColor("#ffc107")))
+        painter.drawEllipse(QPoint(0, 0), 6, 6)
+
+
 class JanelaTreino(QMainWindow):
     def __init__(self,aquisicao=None):
         super().__init__()
@@ -68,10 +135,10 @@ class JanelaTreino(QMainWindow):
         if ok:
             self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao)
             self.aquisicao.conectar()
-            #self.training_window.show()
-            # substituindo a janela de treino pela janela de fim de treino, para testar a nova janela
-            self.training_window = EndTrainingWindow(self.model)
             self.training_window.show()
+            # substituindo a janela de treino pela janela de fim de treino, para testar a nova janela
+            #self.training_window = EndTrainingWindow(self.model)
+            #self.training_window.show()
 
 
 
@@ -88,6 +155,7 @@ class TrainingWindow(QDialog):
             self.outputs = 2 # para binário
         else:
             self.outputs = len(self.model.outputs) if hasattr(self.model, 'outputs') and isinstance(self.model.outputs, list) else 1
+        self.ponteiro = GaugeWidget()
         self.current_output = 0
         self.setWindowTitle('Janela de Treino')
         self.resize(600, 400)
@@ -96,6 +164,7 @@ class TrainingWindow(QDialog):
         self.layout.addWidget(self.label)
         self.countdown_label = QLabel("3")
         self.layout.addWidget(self.countdown_label)
+        self.layout.addWidget(self.ponteiro)
         self.setLayout(self.layout)
         self.start_countdown()
 
@@ -164,7 +233,7 @@ class TrainingWindow(QDialog):
         else:
             self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Errou!")
             #self.label.setPalette(self.palette_vermelha)
-        pass
+        self.ponteiro.set_probabilities(1-pred,pred,0)
 
 class EndTrainingWindow(QDialog):
     def __init__(self, model):
@@ -191,6 +260,27 @@ class EndTrainingWindow(QDialog):
             self.model.save(fname[0])
         
         
+class Ponteiro(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(500,500)
+        self.triangle = QPolygonF([QPointF(0, -20), QPointF(5, 60), QPointF(-5, 60)])
+        self.angle = 0
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.rotate)
+        self.timer.start(100)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(self.angle)
+
+        painter.setBrush(QtGui.QColor(255, 0, 0))
+        painter.drawPolygon(self.triangle)
+    def rotate(self):
+        self.angle = (self.angle + 10) % 360
+        self.update()
 
 
 

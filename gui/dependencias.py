@@ -7,9 +7,11 @@ if usar_modelo:
         usar_modelo = False
         print('Erro ao importar Keras.')
 from PyQt5 import QtCore, QtGui, QtWidgets
-
+from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QPolygon
 # from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QLabel, QSizePolicy
 from PyQt5.QtWidgets import * 
+from PyQt5.QtGui import QPolygonF
+from PyQt5.QtCore import *
 import sys
 import numpy as np
 from scipy.fft import fft
@@ -23,4 +25,4 @@ import matplotlib.pyplot as plt
 from random import choice
 import threading
 import zmq
-
+from random import uniform

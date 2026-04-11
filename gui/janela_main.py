@@ -79,6 +79,8 @@ class JanelaInicial(QMainWindow):
         self.palette_verde.setBrush(QtGui.QPalette.All, QtGui.QPalette.WindowText, brush_verde)
         #self.lbl_lsl.setPalette(self.palette_vermelha)
 
+        self.setup_menu()
+
         
 
 
@@ -216,7 +218,7 @@ class JanelaInicial(QMainWindow):
 
     def setup_menu(self):
         menu = self.menuBar().addMenu('Arquivo')
-        menu.addAction('Carregar Modelo').triggered.connect(self.carregar_modelo)
+        menu.addAction('Carregar Modelo').triggered.connect(self.abrir_modelo)
 
     def setup_painel_esquerdo(self):
         lbl_titulo = QLabel("CONTROLES")
@@ -245,6 +247,14 @@ class JanelaInicial(QMainWindow):
         layout_shape.addRow("Canais:", self.spin_shape_ch)
         group_shape.setLayout(layout_shape)
         self.layout_left.addWidget(group_shape)
+
+        # --- INFOS DO MODELO ---
+        group_modelo = QGroupBox("Informações do Modelo")
+        self.modelo_infos = QLabel("Nenhum modelo carregado."); self.modelo_infos.setStyleSheet("color: gray;")
+        group_modelo.setLayout(QVBoxLayout())
+        group_modelo.layout().addWidget(self.modelo_infos)
+        self.layout_left.addWidget(group_modelo)
+        
 
         # --- CONTROLES E BOTÕES ---
         self.layout_left.addSpacing(10)
@@ -455,20 +465,20 @@ class JanelaInicial(QMainWindow):
         print('mudando a cor da paleta')
 
         self.lbl_lsl.setText('Procurando...')
-        self.lbl_lsl.setPalette(self.palette_amarela)
+        self.lbl_lsl.setStyleSheet(f"color: {self.palette_amarela.color(QtGui.QPalette.WindowText).name()};")
         QApplication.processEvents() # <--- isso aplica as mudanças antes da função acabar
         #self.streams = resolve_byprop('type', 'EEG',timeout=3)
         self.aquisicao.conectar()
         if self.aquisicao.conectado:
-           self.inlet = self.aquisicao.inlet
-           palette = QtGui.QPalette()
-           palette.setBrush(QtGui.QPalette.All, QtGui.QPalette.WindowText,QtGui.QBrush(QtGui.QColor(4,150,0)))
-           self.lbl_lsl.setText('Conectado!')
-           self.lbl_lsl.setPalette(self.palette_verde)
+            self.inlet = self.aquisicao.inlet
+            palette = QtGui.QPalette()
+            palette.setBrush(QtGui.QPalette.All, QtGui.QPalette.WindowText,QtGui.QBrush(QtGui.QColor(4,150,0)))
+            self.lbl_lsl.setText('Conectado!')
+            self.lbl_lsl.setStyleSheet(f"color: {self.palette_verde.color(QtGui.QPalette.WindowText).name()};")
         else:
-           print('Não achou conexão')
-           self.lbl_lsl.setPalette(self.palette_vermelha)
-           self.lbl_lsl.setText('Desconectado')
+            print('Não achou conexão')
+            self.lbl_lsl.setStyleSheet(f"color: {self.palette_vermelha.color(QtGui.QPalette.WindowText).name()};")
+            self.lbl_lsl.setText('Desconectado')
 
     def abrir_janela_plot(self):
         widget_escolhido = self.comboBoxPlots.currentIndex()
