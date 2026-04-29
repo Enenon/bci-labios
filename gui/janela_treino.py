@@ -133,7 +133,7 @@ class JanelaTreino(QMainWindow):
             return
         duration, ok = QInputDialog.getInt(self, 'Duração do Treino', 'Digite a duração em segundos:', 60, 1, 3600, 1)
         if ok:
-            self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao)
+            self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao, salvar_dados=self.botao_guardar_dados.isChecked())
             self.aquisicao.conectar()
             self.training_window.show()
             # substituindo a janela de treino pela janela de fim de treino, para testar a nova janela
@@ -144,12 +144,14 @@ class JanelaTreino(QMainWindow):
 
 
 class TrainingWindow(QDialog):
-    def __init__(self, model, duration,aquisicao):
+    def __init__(self, model, duration,aquisicao,salvar_dados=False):
         super().__init__()
         self.model = model
         self.model_weights = model.get_weights() # Armazena os pesos iniciais do modelo
         self.duration = duration
         self.aquisicao = aquisicao
+        self.salvar_dados = salvar_dados
+        self.dados_guardados = []
         self.output_binario = len(self.model.outputs) == 1
         if self.output_binario:
             self.outputs = 2 # para binário
@@ -201,8 +203,16 @@ class TrainingWindow(QDialog):
             self.countdown_label.setText("")
             # Optionally close after a delay
             QtCore.QTimer.singleShot(2000, self.close)
-            if self.model_weights[0] !=self.model.get_weights()[0]:
+            if self.model_weights[0].all() !=self.model.get_weights()[0].all():
                 print("Pesos foram atualizados durante o treino.")
+            ### salvar lista como txt ###
+            if self.salvar_dados:
+                with open("dados_guardados.txt", "w") as f:
+                    for item in self.dados_guardados:
+                        f.write("%s\n" % item)
+            
+            self.treino_concluido_window = EndTrainingWindow(self.model)
+            self.treino_concluido_window.show()
 
             '''for layer in self.model.layers:
                 print(f"Nome da Camada: {layer.name}")
@@ -216,16 +226,23 @@ class TrainingWindow(QDialog):
 
     def training(self):
         # Aqui você pode adicionar a lógica de treinamento usando self.model e self.aquisicao
-        if len(self.aquisicao.current_data) != self.model.input_shape[1]:
-            print(self.aquisicao.current_data.shape, self.model.input_shape)
+        '''if len(self.aquisicao.current_data) != self.model.input_shape[1]:
+            print(self.aquisicao.current_data.shape, self.model.input_shape)'''
+        print('training')
         self.aquisicao.adquirir()
         #pred = self.aquisicao.predict(self.model)
         pred = self.model(self.aquisicao.current_data[np.newaxis, :, :])
+        '''if 0 in self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :]:
+            print("Dados atuais:", self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :].tolist())
+            print(self.aquisicao.current_data.shape)'''
+        #print(self.aquisicao.new_len)
+        if self.salvar_dados:
+                self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data-self.aquisicao.new_len:, :].tolist() # salva os dados adquiridos durante o treino, para análise posterior
         if self.output_binario:
             pred = np.argmax(pred)  # Converte para classe binária
         else:
             pred = np.argmax(pred, axis=1)  # Converte para classe multi-classe
-        print(pred)
+        #print(pred)
         if pred == self.current_output:
             self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Acertou!")
             #self.label.setPalette(self.palette_verde)

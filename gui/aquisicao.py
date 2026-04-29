@@ -8,6 +8,7 @@ class Aquisicao:
         self.num_canais = num_canais
         self.conectado = False
         self.current_data = np.zeros((self.len_data, self.num_canais))
+        self.new_len = 0
 
         self.xlim_FFT = xlim_FFT # nota: xlim_FFT é o número de pontos para o plot do FFT, mas deve ser o mesmo número que o número de pontos usados para calcular o FFT?
         self.fft_len = self.len_data * 2
@@ -28,13 +29,17 @@ class Aquisicao:
     def adquirir(self):
         if self.conectado:
             chunk, _ = self.inlet.pull_chunk(timeout=0.0)
-            if not chunk: return
+            if not chunk: 
+                self.new_len = 0
+                print('not chunk')
+                return
             if len(chunk) > self.len_data:  # Se o chunk for maior que o buffer, pegue apenas os últimos dados
                 chunk = chunk[-self.len_data:]
-            new_len = len(chunk)
-            self.current_data = np.roll(self.current_data, -new_len, axis=0)
-            self.current_data[-new_len:, :] = chunk
-            print(new_len,np.array(chunk).shape)
+            print(len(chunk),self.len_data)
+            self.new_len = len(chunk)
+            self.current_data = np.roll(self.current_data, -self.new_len, axis=0)
+            self.current_data[-self.new_len:, :] = chunk
+            #print(self.new_len,np.array(chunk).shape)
 
             for i in range(self.num_canais):
                 # Pegamos os dados do canal i
