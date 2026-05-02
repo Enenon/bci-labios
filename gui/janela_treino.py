@@ -88,11 +88,24 @@ class JanelaTreino(QMainWindow):
         self.botao_abrir_modelo.clicked.connect(self.abrir_modelo)
         self.layout1.addWidget(self.botao_abrir_modelo)
 
+        layout_shape = QFormLayout()
+        self.line_duracao = QLineEdit(self)
+        self.line_duracao.setText('60') # duração padrão de 60 segundos
+        layout_shape.addRow("Duração do Treino (s):", self.line_duracao)
+        self.layout1.addLayout(layout_shape)
+        
+        layout_shape = QFormLayout()
+        self.line_paciente = QLineEdit(self)
+        self.line_paciente.setPlaceholderText('Irmão do Jorel') # nome do paciente padrão
+        layout_shape.addRow("Nome do Paciente:", self.line_paciente)
+        self.layout1.addLayout(layout_shape)
+
         self.modelo_infos = QLabel('', self)
         self.layout1.addWidget(self.modelo_infos)
 
         self.botao_guardar_dados = QCheckBox('Guardar Dados', self)
         self.layout1.addWidget(self.botao_guardar_dados)
+        
 
         self.botao_iniciar_treino = QPushButton('Iniciar Treino', self)
         self.botao_iniciar_treino.clicked.connect(self.iniciar_treino)
@@ -131,11 +144,20 @@ class JanelaTreino(QMainWindow):
         if not hasattr(self, 'model'):
             QMessageBox.warning(self, 'Aviso', 'Carregue um modelo primeiro.')
             return
-        duration, ok = QInputDialog.getInt(self, 'Duração do Treino', 'Digite a duração em segundos:', 60, 1, 3600, 1)
-        if ok:
-            self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao, salvar_dados=self.botao_guardar_dados.isChecked())
-            self.aquisicao.conectar()
-            self.training_window.show()
+        
+        duration = int(self.line_duracao.text())
+        if not duration:
+            QMessageBox.warning(self, 'Aviso', 'Digite a duração do treino.')
+            return
+        try:
+            duration = int(duration)
+        except ValueError:
+            QMessageBox.warning(self, 'Aviso', 'Duração inválida.')
+            return
+
+        self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao, salvar_dados=self.botao_guardar_dados.isChecked())
+        self.aquisicao.conectar()
+        self.training_window.show()
             # substituindo a janela de treino pela janela de fim de treino, para testar a nova janela
             #self.training_window = EndTrainingWindow(self.model)
             #self.training_window.show()
@@ -152,6 +174,7 @@ class TrainingWindow(QDialog):
         self.aquisicao = aquisicao
         self.salvar_dados = salvar_dados
         self.dados_guardados = []
+        self.marcacoes = []
         self.output_binario = len(self.model.outputs) == 1
         if self.output_binario:
             self.outputs = 2 # para binário
@@ -210,7 +233,10 @@ class TrainingWindow(QDialog):
                 with open("dados_guardados.txt", "w") as f:
                     for item in self.dados_guardados:
                         f.write("%s\n" % item)
-            
+                with open("marcacoes.txt", "w") as f:
+                    for item in self.marcacoes:
+                        f.write("%s\n" % item)
+
             self.treino_concluido_window = EndTrainingWindow(self.model)
             self.treino_concluido_window.show()
 
@@ -236,8 +262,6 @@ class TrainingWindow(QDialog):
             print("Dados atuais:", self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :].tolist())
             print(self.aquisicao.current_data.shape)'''
         #print(self.aquisicao.new_len)
-        if self.salvar_dados:
-                self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data-self.aquisicao.new_len:, :].tolist() # salva os dados adquiridos durante o treino, para análise posterior
         if self.output_binario:
             pred = np.argmax(pred)  # Converte para classe binária
         else:
@@ -251,6 +275,10 @@ class TrainingWindow(QDialog):
             self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Errou!")
             #self.label.setPalette(self.palette_vermelha)
         self.ponteiro.set_probabilities(1-pred,pred,0)
+        if self.salvar_dados:
+                self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data-self.aquisicao.new_len:, :].tolist() # salva os dados adquiridos durante o treino, para análise posterior
+                len_dados = len(self.dados_guardados)
+                self.marcacoes.append([len_dados - self.aquisicao.len_data ,len_dados, pred, self.current_output])
 
 class EndTrainingWindow(QDialog):
     def __init__(self, model):
