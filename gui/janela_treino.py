@@ -92,9 +92,9 @@ class JanelaTreino(QMainWindow):
         self.line_duracao = QLineEdit(self)
         self.line_duracao.setText('60') # duração padrão de 60 segundos
         layout_shape.addRow("Duração do Treino (s):", self.line_duracao)
-        self.layout1.addLayout(layout_shape)
+        #self.layout1.addLayout(layout_shape)
         
-        layout_shape = QFormLayout()
+        #layout_shape = QFormLayout()
         self.line_paciente = QLineEdit(self)
         self.line_paciente.setPlaceholderText('Irmão do Jorel') # nome do paciente padrão
         layout_shape.addRow("Nome do Paciente:", self.line_paciente)
