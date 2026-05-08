@@ -15,9 +15,16 @@ class Ui_Form(object):
     def setupUi(self, Form):
         Form.setObjectName("Form")
         Form.resize(400, 300)
-        self.lineEdit = QtWidgets.QLineEdit(Form)
-        self.lineEdit.setGeometry(QtCore.QRect(100, 100, 113, 20))
-        self.lineEdit.setObjectName("lineEdit")
+        self.radioButton = QtWidgets.QRadioButton(Form)
+        self.radioButton.setGeometry(QtCore.QRect(20, 120, 82, 17))
+        self.radioButton.setObjectName("radioButton")
+        self.checkBox = QtWidgets.QCheckBox(Form)
+        self.checkBox.setGeometry(QtCore.QRect(20, 160, 70, 17))
+        self.checkBox.setObjectName("checkBox")
+        self.progressBar = QtWidgets.QProgressBar(Form)
+        self.progressBar.setGeometry(QtCore.QRect(140, 240, 118, 23))
+        self.progressBar.setProperty("value", 24)
+        self.progressBar.setObjectName("progressBar")
 
         self.retranslateUi(Form)
         QtCore.QMetaObject.connectSlotsByName(Form)
@@ -25,7 +32,8 @@ class Ui_Form(object):
     def retranslateUi(self, Form):
         _translate = QtCore.QCoreApplication.translate
         Form.setWindowTitle(_translate("Form", "Form"))
-        self.lineEdit.setText(_translate("Form", "60"))
+        self.radioButton.setText(_translate("Form", "RadioButton"))
+        self.checkBox.setText(_translate("Form", "CheckBox"))
 
 
 if __name__ == "__main__":

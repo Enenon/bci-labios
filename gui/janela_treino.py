@@ -237,7 +237,7 @@ class TrainingWindow(QDialog):
                     for item in self.marcacoes:
                         f.write("%s\n" % item)
 
-            self.treino_concluido_window = EndTrainingWindow(self.model)
+            self.treino_concluido_window = EndTrainingWindow(self.model,self)
             self.treino_concluido_window.show()
 
             '''for layer in self.model.layers:
@@ -255,35 +255,45 @@ class TrainingWindow(QDialog):
         '''if len(self.aquisicao.current_data) != self.model.input_shape[1]:
             print(self.aquisicao.current_data.shape, self.model.input_shape)'''
         print('training')
-        self.aquisicao.adquirir()
-        #pred = self.aquisicao.predict(self.model)
-        pred = self.model(self.aquisicao.current_data[np.newaxis, :, :])
-        '''if 0 in self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :]:
-            print("Dados atuais:", self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :].tolist())
-            print(self.aquisicao.current_data.shape)'''
-        #print(self.aquisicao.new_len)
-        if self.output_binario:
-            pred = np.argmax(pred)  # Converte para classe binária
+        if not self.aquisicao.adquirir(): return #assim, só quando tiver chunk novo ele faz o treino e armazena os novos dados em self.dados_guardados
         else:
-            pred = np.argmax(pred, axis=1)  # Converte para classe multi-classe
-        #print(pred)
-        if pred == self.current_output:
-            self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Acertou!")
-            #self.label.setPalette(self.palette_verde)
-            self.model.fit(self.aquisicao.current_data[np.newaxis, :, :], np.array([self.current_output]), epochs=1, verbose=0)
-        else:
-            self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Errou!")
-            #self.label.setPalette(self.palette_vermelha)
-        self.ponteiro.set_probabilities(1-pred,pred,0)
-        if self.salvar_dados:
-                self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data-self.aquisicao.new_len:, :].tolist() # salva os dados adquiridos durante o treino, para análise posterior
-                len_dados = len(self.dados_guardados)
-                self.marcacoes.append([len_dados - self.aquisicao.len_data ,len_dados, pred, self.current_output])
+            #pred = self.aquisicao.predict(self.model)
+            pred = self.model(self.aquisicao.current_data[np.newaxis, :, :])
+            '''if 0 in self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :]:
+                print("Dados atuais:", self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :].tolist())
+                print(self.aquisicao.current_data.shape)'''
+            #print(self.aquisicao.new_len)
+            if self.output_binario:
+                pred = np.argmax(pred)  # Converte para classe binária
+            else:
+                pred = np.argmax(pred, axis=1)  # Converte para classe multi-classe
+            #print(pred)
+            if pred == self.current_output:
+                self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Acertou!")
+                #self.label.setPalette(self.palette_verde)
+                self.model.fit(self.aquisicao.current_data[np.newaxis, :, :], np.array([self.current_output]), epochs=1, verbose=0)
+            else:
+                self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Errou!")
+                #self.label.setPalette(self.palette_vermelha)
+            self.ponteiro.set_probabilities(1-pred,pred,0)
+            if self.salvar_dados:
+                    if len(self.dados_guardados) == 0: # se for o primeiro chunk, salva tudo o que tiver no buffer, senão salva só o que for novo
+                        new_chunk = self.aquisicao.len_data
+                    else:
+                        new_chunk = self.aquisicao.new_len
+                    self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data-new_chunk:, :].tolist() # salva os dados adquiridos durante o treino, para análise posterior
+                    print(len(self.dados_guardados),len(self.aquisicao.current_data),self.aquisicao.len_data,self.aquisicao.new_len)
+                    if self.aquisicao.new_len == 0:
+                        print(self.aquisicao.current_data)
+                    
+                    len_dados = len(self.dados_guardados)
+                    self.marcacoes.append([len_dados - self.aquisicao.len_data ,len_dados, pred, self.current_output])
 
 class EndTrainingWindow(QDialog):
-    def __init__(self, model):
+    def __init__(self, model, janela_treino=None):
         super().__init__()
         self.model = model
+        self.janela_treino = janela_treino
         self.current_output = 0
         self.setWindowTitle('Finalização do Treino')
         self.resize(600, 400)
@@ -291,18 +301,28 @@ class EndTrainingWindow(QDialog):
         self.label = QLabel("Treino concluído!"); self.label.setFont(QtGui.QFont('Arial', 16)); self.label.setAlignment(QtCore.Qt.AlignCenter)
         self.layout.addWidget(self.label)
         layoutshape = QFormLayout()
-        self.plainTextEdit = QPlainTextEdit()
-        self.plainTextEdit.setPlaceholderText("Digite o nome do paciente aqui..."); self.plainTextEdit.setFixedHeight(30)
-        layoutshape.addRow('Nome do Paciente:', self.plainTextEdit)
+        self.epocas_separadas_checkBox = QtWidgets.QCheckBox(self)
+        layoutshape.addRow('Epocas Separadas:', self.epocas_separadas_checkBox)
+        self.salvar_apenas_acertos_checkBox = QtWidgets.QCheckBox(self)
+        layoutshape.addRow('Salvar Apenas Acertos:', self.salvar_apenas_acertos_checkBox)
         self.layout.addLayout(layoutshape)
-        self.button_salvar = QPushButton("Salvar Modelo")
-        self.button_salvar.clicked.connect(self.salvar_modelo)
-        self.layout.addWidget(self.button_salvar)
+        self.button_salvar_modelo = QPushButton("Salvar Modelo")
+        self.button_salvar_modelo.clicked.connect(self.salvar_modelo)
+        self.layout.addWidget(self.button_salvar_modelo)
+        self.button_salvar_dados = QPushButton("Salvar Dados do Treino")
+        self.button_salvar_dados.clicked.connect(self.salvar_dados)
+        self.layout.addWidget(self.button_salvar_dados)
 
     def salvar_modelo(self):
         fname = QFileDialog.getSaveFileName(self, 'Salvar Modelo', '../',"Model files (*.h5)")
         if fname[0]:
             self.model.save(fname[0])
+    def salvar_dados(self):
+        fname = QFileDialog.getSaveFileName(self, 'Salvar Dados', '../',"Text files (*.txt)")
+        if fname[0]:
+            with open(fname[0], "w") as f:
+                for item in self.janela_treino.dados_guardados:
+                    f.write("%s\n" % item)
         
         
 class Ponteiro(QWidget):
