@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtGui import QPolygonF
 from PyQt5.QtCore import *
 import sys
+import os
 import numpy as np
 from scipy.fft import fft
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas

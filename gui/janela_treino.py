@@ -258,20 +258,24 @@ class TrainingWindow(QDialog):
         if not self.aquisicao.adquirir(): return #assim, só quando tiver chunk novo ele faz o treino e armazena os novos dados em self.dados_guardados
         else:
             #pred = self.aquisicao.predict(self.model)
-            pred = self.model(self.aquisicao.current_data[np.newaxis, :, :])
+            epoch = np.array([self.aquisicao.current_data]) # shape (1, time_steps, num_channels)
+            norm = (np.array(epoch) - epoch.min()) / (epoch.max() - epoch.min() + 1e-8)
+            pred = self.model.predict(norm,verbose=0)[0] # norm[np.newaxis, :, :]
             '''if 0 in self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :]:
                 print("Dados atuais:", self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :].tolist())
                 print(self.aquisicao.current_data.shape)'''
             #print(self.aquisicao.new_len)
             if self.output_binario:
-                pred = np.argmax(pred)  # Converte para classe binária
+                pred = pred[0]  # Converte para classe binária
             else:
+                print('não-binário',pred)
                 pred = np.argmax(pred, axis=1)  # Converte para classe multi-classe
+                print('pred pós-argmax',pred)
             #print(pred)
             if pred == self.current_output:
                 self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Acertou!")
                 #self.label.setPalette(self.palette_verde)
-                self.model.fit(self.aquisicao.current_data[np.newaxis, :, :], np.array([self.current_output]), epochs=1, verbose=0)
+                self.model.fit(norm, np.array([self.current_output]), epochs=1, verbose=0)
             else:
                 self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Errou!")
                 #self.label.setPalette(self.palette_vermelha)
@@ -287,7 +291,7 @@ class TrainingWindow(QDialog):
                         print(self.aquisicao.current_data)
                     
                     len_dados = len(self.dados_guardados)
-                    self.marcacoes.append([len_dados - self.aquisicao.len_data ,len_dados, pred, self.current_output])
+                    self.marcacoes.append([len_dados - self.aquisicao.len_data ,len_dados, round(float(pred),2), self.current_output])
 
 class EndTrainingWindow(QDialog):
     def __init__(self, model, janela_treino=None):
@@ -318,11 +322,44 @@ class EndTrainingWindow(QDialog):
         if fname[0]:
             self.model.save(fname[0])
     def salvar_dados(self):
-        fname = QFileDialog.getSaveFileName(self, 'Salvar Dados', '../',"Text files (*.txt)")
-        if fname[0]:
-            with open(fname[0], "w") as f:
-                for item in self.janela_treino.dados_guardados:
-                    f.write("%s\n" % item)
+        if self.janela_treino.output_binario:
+            num_outputs = 2
+        else:
+            num_outputs = len(self.model.outputs)
+        if self.epocas_separadas_checkBox.isChecked():
+            self.dados_separados = [[] for _ in range(num_outputs)]  # cria uma lista para cada output
+            if self.salvar_apenas_acertos_checkBox.isChecked():
+                if self.janela_treino.output_binario:
+                    self.janela_treino.marcacoes = [m for m in self.janela_treino.marcacoes if abs(m[2] - m[3]) < 0.5]  # filtra só os acertos
+                else:
+                    self.janela_treino.marcacoes = [m for m in self.janela_treino.marcacoes if m[2] == m[3]]  # filtra só os acertos
+            for m in self.janela_treino.marcacoes:
+                if self.janela_treino.output_binario:
+                    for i in range(num_outputs):
+                        if m[3] == i:
+                            self.dados_separados[i].append(self.janela_treino.dados_guardados[m[0]:m[1]])  # salva os dados correspondentes a cada marcação
+                else:
+                    self.dados_separados[m[3]].append(self.janela_treino.dados_guardados[m[0]:m[1]])  # salva os dados correspondentes a cada marcação
+            file = str(QFileDialog.getExistingDirectory(self, "Select Directory"))
+            if file:
+                if self.janela_treino.output_binario:
+                    for i in range(2):
+                        if not os.path.exists(file+f"/output_{i}"):
+                            os.makedirs(file+f"/output_{i}")
+                        for j, epoch in enumerate(self.dados_separados[i]):
+                            np.savetxt(file+f"/output_{i}/epoch_{j}.txt", epoch)
+                else:
+                    for i in range(num_outputs):
+                        if not os.path.exists(file+f"/output_{i}"):
+                            os.makedirs(file+f"/output_{i}")
+                        for j, epoch in enumerate(self.dados_separados[i]):
+                            np.savetxt(file+f"/output_{i}/epoch_{j}.txt", epoch)
+        else:
+            fname = QFileDialog.getSaveFileName(self, 'Salvar Dados', '../',"Text files (*.txt)")
+            if fname[0]:
+                with open(fname[0], "w") as f:
+                    for item in self.janela_treino.dados_guardados:
+                        f.write("%s\n" % item)
         
         
 class Ponteiro(QWidget):

@@ -30,7 +30,8 @@ class JanelaInicial(QMainWindow):
         self.canais = ['C3', 'C4', 'Fp1', 'Fp2', 'F7', 'F3', 'F4', 'F8','T7', 'T8', 'P7', 'P3', 'P4', 'P8', 'O1', 'O2']
         self.n_channels = len(self.canais) 
         self.x_size = 500 
-        
+        self.len_data = 1500
+
         # --- BUFFER DA ESTEIRA ---
         self.buffer_sobra = [] 
         
@@ -43,7 +44,7 @@ class JanelaInicial(QMainWindow):
         self.fft_smooth_factor = 0.0
         self.fft_buffer_history = np.zeros((self.n_channels, self.x_size//2))
 
-        self.aquisicao = Aquisicao(len_data=self.x_size,num_canais=self.n_channels,xlim_FFT=self.x_size//2,smooth_factor=self.fft_smooth_factor)
+        self.aquisicao = Aquisicao(len_data=self.len_data,num_canais=self.n_channels,xlim_FFT=self.x_size//2,smooth_factor=self.fft_smooth_factor)
 
         # --- LAYOUT ---
         self.centralwidget = QWidget(self)
@@ -55,7 +56,7 @@ class JanelaInicial(QMainWindow):
         self.layout_left = QVBoxLayout(self.panel_left)
         self.setup_painel_esquerdo()
         self.main_layout.addWidget(self.panel_left)
-
+        
         self.panel_right = QWidget()
         self.layout_right = QVBoxLayout(self.panel_right)
         self.tabs = QTabWidget()
@@ -101,27 +102,6 @@ class JanelaInicial(QMainWindow):
         QCheckBox::indicator { width: 15px; height: 15px; }
         """
         self.setStyleSheet(qss)
-
-    def setup_ui_controls(self):
-        self.lbl_lsl = QLabel('LSL: desconectado'); self.lbl_unity = QLabel('Unity: desconectado');
-        self.lbl_model = QLabel('Modelo: nenhum')
-
-        self.layout_left.addWidget(self.lbl_lsl)
-        self.layout_left.addWidget(self.lbl_unity)
-        self.layout_left.addWidget(self.lbl_model)
-
-        self.btn_lsl = QPushButton('Conectar LSL'); self.btn_lsl.clicked.connect(self.conectar_LSL)
-        self.btn_unity = QPushButton('Conectar Unity'); self.btn_unity.clicked.connect(self.conectar_Unity)
-        self.btn_iniciar = QPushButton('Iniciar BCI'); self.btn_iniciar.clicked.connect(self.toggle_bci)
-
-        self.layout_left.addWidget(self.btn_lsl)
-        self.layout_left.addWidget(self.btn_unity)
-        self.layout_left.addWidget(self.btn_iniciar)
-
-        self.label_previsao = QLabel('--', alignment=QtCore.Qt.AlignCenter)
-        self.label_previsao.setFont(QtGui.QFont('Arial', 20, QtGui.QFont.Bold))
-        self.layout_left.addWidget(self.label_previsao)
-        self.layout_left.addStretch()
 
     def setup_tabs(self):
         self.tab_time = QWidget()
@@ -306,7 +286,7 @@ class JanelaInicial(QMainWindow):
 
         x = np.arange(self.x_size)
         for i, line in enumerate(self.lines_time):
-            channel = self.aquisicao.current_data[:, i]
+            channel = self.aquisicao.current_data[self.len_data - self.x_size:, i]
             offset = i * self.escala_visual
             line.set_data(x, channel + offset)
 
@@ -320,22 +300,22 @@ class JanelaInicial(QMainWindow):
         self.atualizar_graficos_visuais()
 
         if self.model is not None:
-            epoch = self.aquisicao.get_epoch(self.epoch_size)
-            norm = (epoch - epoch.min()) / (epoch.ptp() + 1e-8)
+            epoch = np.array([self.aquisicao.current_data[self.len_data - int(self.spin_shape_time.value()):]])
+            norm = (epoch - epoch.min()) / (epoch.max() - epoch.min() + 1e-8)
+
             try:
-                pred = self.model.predict(norm[np.newaxis, ...], verbose=0)[0]
-                if pred.shape[-1] == 3:
+                pred = self.model.predict(norm, verbose=0)[0]
+                if pred.shape[-1] > 2:
                     idx = int(np.argmax(pred))
-                    label = ['ESQUERDA', 'DIREITA', 'REPOUSO'][idx]
+                    label = str(idx)
                 else:
-                    idx = int(pred[0] > 0.5)
-                    label = ['REPOUSO', 'MOV']['idx']
-                self.label_previsao.setText(label)
+                    label = str(pred[0])
+                self.lbl_predicao.setText(label)
                 if self.unity:
                     commands = ['LEFT', 'RIGHT', 'REST']
                     self.unity.send(commands[idx if pred.shape[-1] == 3 else idx])
             except Exception:
-                self.label_previsao.setText('Modelo erro')
+                self.lbl_predicao.setText('Modelo erro')
 
     def iniciar_sessao(self):
         # MODO TESTE
@@ -379,7 +359,7 @@ class JanelaInicial(QMainWindow):
     
         try:
             #pred = self.predict(np.array([self.current_data[self.x_size - self.epochsize:]])).numpy()[0][0]
-            pred = self.predict(np.array([self.aquisicao.current_data[self.x_size - self.epochsize:]])).numpy()[0][0]
+            pred = self.predict(np.array([self.aquisicao.current_data[self.len_data - self.epochsize:]])).numpy()[0][0]
             if pred < self.limiar:
                 label = 'T1'
             elif pred > 1 - self.limiar:
@@ -389,7 +369,7 @@ class JanelaInicial(QMainWindow):
         except: pred = 'Modelo incompatível'
 
 
-        self.label_previsao.setText(str(pred))
+        self.lbl_predicao.setText(str(pred))
         try:
             self.enviarUnity()
         except:
@@ -408,7 +388,7 @@ class JanelaInicial(QMainWindow):
             offset = i * self.escala_visual
            
             '''line.set_data(x_data, channel_data + offset)'''
-            line.set_data(x_data, self.aquisicao.current_data[:,i] + offset)
+            line.set_data(x_data, self.aquisicao.current_data[self.len_data-self.x_size:,i] + offset)
 
             '''segment_FFT = channel_data[-self.xlim_FFT*2:]
             fft_data = fft(segment_FFT)
@@ -436,7 +416,7 @@ class JanelaInicial(QMainWindow):
         self.unity = UnitySender()
 
     def enviarUnity(self):
-            self.unity.send(str(self.label_previsao))
+            self.unity.send(str(self.lbl_predicao.text()))
 
 
 
@@ -494,7 +474,7 @@ class JanelaInicial(QMainWindow):
             x = np.arange(self.x_size)
             for i, l in enumerate(self.lines_time):
                 off = i * self.escala_visual
-                y = self.current_data_visual[:, i] - np.mean(self.current_data_visual[:, i])
+                y = self.current_data_visual[self.len_data-self.x_size:, i] - np.mean(self.current_data_visual[:, i])
                 l.set_data(x, y + off)
                 rms = np.sqrt(np.mean(y**2))
                 self.rms_texts[i].set_text(f"{rms:.2f} uVrms"); self.rms_texts[i].set_position((self.x_size+10, off))
