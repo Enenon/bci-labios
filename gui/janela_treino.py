@@ -78,6 +78,7 @@ class JanelaTreino(QMainWindow):
         self.setCentralWidget(self.centralwidget)
         self.figure = Figure(figsize=(5, 3), dpi=100)
         self.layout1 = QVBoxLayout(self.centralwidget)
+        self.output_binario = False
 
         self.titleLabel = QLabel('Treinamento da Rede Neural', self)
         self.titleLabel.setFont(QtGui.QFont('Arial', 16))
@@ -104,12 +105,36 @@ class JanelaTreino(QMainWindow):
         self.layout1.addWidget(self.modelo_infos)
 
         self.botao_guardar_dados = QCheckBox('Guardar Dados', self)
+        self.botao_guardar_dados.setChecked(True) # por padrão, guardar os dados do treino para análise posterior
         self.layout1.addWidget(self.botao_guardar_dados)
-        
+
+        self.botao_incluir_rest = QCheckBox('Incluir Intervalo', self)
+        self.botao_incluir_rest.setEnabled(False)
+        self.limiar = QLineEdit(self)
+        self.limiar.setText('0.5')
+        self.limiar.setValidator(QtGui.QDoubleValidator(0.0, 0.5, 2)) # limiar entre 0 e 0.5, com 2 casas decimais
+        self.limiar.setMaximumWidth(50)
+        self.limiar.setEnabled(False)
+        self.layout2widget = QWidget(self)
+        self.layout2widget.setGeometry(QtCore.QRect(0, 0, 20, 20)) # quero que o limiar fique do lado do checkbox
+        self.layout2widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed) # para que o layout não estique o widget
+        self.layout2 = QHBoxLayout(self.layout2widget)
+        self.layout2.setContentsMargins(0, 0, 0, 0)
+        #self.layout2.setGeometry(QtCore.QRect(30, 210, 30, 81))
+        self.layout2.addWidget(self.botao_incluir_rest)
+        #self.layout2.addWidget(QLabel('Limiar:'))
+        self.layout2.addWidget(self.limiar)
+        self.layout1.addWidget(self.layout2widget)
+        #self.layout1.addLayout(self.layout2)
+
+        '''self.layout1.addWidget(self.botao_incluir_rest)
+        self.layout1.addWidget(QLabel('Limiar de Acerto (0-1):'))
+        self.layout1.addWidget(self.limiar)'''
 
         self.botao_iniciar_treino = QPushButton('Iniciar Treino', self)
         self.botao_iniciar_treino.clicked.connect(self.iniciar_treino)
         self.layout1.addWidget(self.botao_iniciar_treino)
+        
 
         self.palette_verde = QtGui.QPalette()
         self.palette_verde.setColor(QtGui.QPalette.WindowText, QtGui.QColor(0, 150, 0))  # Verde
@@ -135,6 +160,10 @@ class JanelaTreino(QMainWindow):
                 self.modelo_infos.setPalette(self.palette_verde)
 
                 self.aquisicao = Aquisicao(len_data=self.model.input_shape[1], num_canais=self.model.input_shape[2])
+                self.output_binario = len(self.model.outputs) == 1
+                if self.output_binario:
+                    self.botao_incluir_rest.setEnabled(True) # se for binário, pode incluir intervalo como terceira classe
+                    self.limiar.setEnabled(True) # se for binário, faz sentido usar um limiar de acerto
             except:
                 self.modelo_infos.setText('Modelo incompatível.')
                 self.modelo_infos.setPalette(self.palette_vermelha)
@@ -155,7 +184,7 @@ class JanelaTreino(QMainWindow):
             QMessageBox.warning(self, 'Aviso', 'Duração inválida.')
             return
 
-        self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao, salvar_dados=self.botao_guardar_dados.isChecked())
+        self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao, salvar_dados=self.botao_guardar_dados.isChecked(),train_window=self)
         self.aquisicao.conectar()
         self.training_window.show()
             # substituindo a janela de treino pela janela de fim de treino, para testar a nova janela
@@ -166,7 +195,7 @@ class JanelaTreino(QMainWindow):
 
 
 class TrainingWindow(QDialog):
-    def __init__(self, model, duration,aquisicao,salvar_dados=False):
+    def __init__(self, model, duration,aquisicao,salvar_dados=False,train_window=None):
         super().__init__()
         self.model = model
         self.model_weights = model.get_weights() # Armazena os pesos iniciais do modelo
@@ -176,6 +205,8 @@ class TrainingWindow(QDialog):
         self.dados_guardados = []
         self.marcacoes = []
         self.output_binario = len(self.model.outputs) == 1
+        self.limiar = float(train_window.limiar.text()) if train_window else 0.5 
+        incluir_rest = train_window.botao_incluir_rest.isChecked() if train_window else False
         if self.output_binario:
             self.outputs = 2 # para binário
         else:
@@ -252,8 +283,6 @@ class TrainingWindow(QDialog):
 
     def training(self):
         # Aqui você pode adicionar a lógica de treinamento usando self.model e self.aquisicao
-        '''if len(self.aquisicao.current_data) != self.model.input_shape[1]:
-            print(self.aquisicao.current_data.shape, self.model.input_shape)'''
         print('training')
         if not self.aquisicao.adquirir(): return #assim, só quando tiver chunk novo ele faz o treino e armazena os novos dados em self.dados_guardados
         else:
@@ -261,9 +290,6 @@ class TrainingWindow(QDialog):
             epoch = np.array([self.aquisicao.current_data]) # shape (1, time_steps, num_channels)
             norm = (np.array(epoch) - epoch.min()) / (epoch.max() - epoch.min() + 1e-8)
             pred = self.model.predict(norm,verbose=0)[0] # norm[np.newaxis, :, :]
-            '''if 0 in self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :]:
-                print("Dados atuais:", self.aquisicao.current_data.copy()[-self.aquisicao.new_len:, :].tolist())
-                print(self.aquisicao.current_data.shape)'''
             #print(self.aquisicao.new_len)
             if self.output_binario:
                 pred = pred[0]  # Converte para classe binária
@@ -272,7 +298,7 @@ class TrainingWindow(QDialog):
                 pred = np.argmax(pred, axis=1)  # Converte para classe multi-classe
                 print('pred pós-argmax',pred)
             #print(pred)
-            if pred == self.current_output:
+            if abs(pred - self.current_output) < self.limiar: # se acertou (predição dentro do limiar), treina com a amostra atual
                 self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Acertou!")
                 #self.label.setPalette(self.palette_verde)
                 self.model.fit(norm, np.array([self.current_output]), epochs=1, verbose=0)
@@ -330,7 +356,7 @@ class EndTrainingWindow(QDialog):
             self.dados_separados = [[] for _ in range(num_outputs)]  # cria uma lista para cada output
             if self.salvar_apenas_acertos_checkBox.isChecked():
                 if self.janela_treino.output_binario:
-                    self.janela_treino.marcacoes = [m for m in self.janela_treino.marcacoes if abs(m[2] - m[3]) < 0.5]  # filtra só os acertos
+                    self.janela_treino.marcacoes = [m for m in self.janela_treino.marcacoes if abs(m[2] - m[3]) < self.janela_treino.limiar]  # filtra só os acertos
                 else:
                     self.janela_treino.marcacoes = [m for m in self.janela_treino.marcacoes if m[2] == m[3]]  # filtra só os acertos
             for m in self.janela_treino.marcacoes:
@@ -347,12 +373,16 @@ class EndTrainingWindow(QDialog):
                         if not os.path.exists(file+f"/output_{i}"):
                             os.makedirs(file+f"/output_{i}")
                         for j, epoch in enumerate(self.dados_separados[i]):
+                            epoch = np.array(epoch)
+                            epoch = (epoch - epoch.min()) / (epoch.max() - epoch.min() + 1e-8) # normaliza os dados da época antes de salvar
                             np.savetxt(file+f"/output_{i}/epoch_{j}.txt", epoch)
                 else:
                     for i in range(num_outputs):
                         if not os.path.exists(file+f"/output_{i}"):
                             os.makedirs(file+f"/output_{i}")
                         for j, epoch in enumerate(self.dados_separados[i]):
+                            epoch = np.array(epoch)
+                            epoch = (epoch - epoch.min()) / (epoch.max() - epoch.min() + 1e-8) # normaliza os dados da época antes de salvar
                             np.savetxt(file+f"/output_{i}/epoch_{j}.txt", epoch)
         else:
             fname = QFileDialog.getSaveFileName(self, 'Salvar Dados', '../',"Text files (*.txt)")
