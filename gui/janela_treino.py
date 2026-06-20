@@ -127,6 +127,17 @@ class JanelaTreino(QMainWindow):
         self.layout1.addWidget(self.layout2widget)
         #self.layout1.addLayout(self.layout2)
 
+        self.protocolo_personalizado_checkBox = QCheckBox('Protocolo Personalizado', self)
+        self.layout1.addWidget(self.protocolo_personalizado_checkBox)
+        self.protocolo_personalizado_checkBox.stateChanged.connect(self.toggle_protocolo_personalizado)
+        self.protocolo_line = QLineEdit(self)
+        self.protocolo_line.setPlaceholderText('Ex: 0,1,0,2,1')
+        self.protocolo_line.setEnabled(False)
+        layout_shape = QFormLayout()
+        layout_shape.addRow("Sequência de Treino:", self.protocolo_line)
+        self.layout1.addLayout(layout_shape)
+
+
         '''self.layout1.addWidget(self.botao_incluir_rest)
         self.layout1.addWidget(QLabel('Limiar de Acerto (0-1):'))
         self.layout1.addWidget(self.limiar)'''
@@ -145,6 +156,12 @@ class JanelaTreino(QMainWindow):
             self.aquisicao = aquisicao
         else:
             self.aquisicao = Aquisicao(len_data=512, num_canais=16)
+
+    def toggle_protocolo_personalizado(self, state):
+        if state == QtCore.Qt.Checked:
+            self.protocolo_line.setEnabled(True)
+        else:
+            self.protocolo_line.setEnabled(False)
 
     def abrir_modelo(self):
         if usar_modelo:
@@ -183,8 +200,11 @@ class JanelaTreino(QMainWindow):
         except ValueError:
             QMessageBox.warning(self, 'Aviso', 'Duração inválida.')
             return
-
-        self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao, salvar_dados=self.botao_guardar_dados.isChecked(),train_window=self)
+        if self.protocolo_personalizado_checkBox.isChecked():
+            self.protocolo_personalizado = [int(x.strip()) for x in self.protocolo_line.text().split(',')]
+        else:
+            self.protocolo_personalizado = [i for i in range(len(self.model.outputs))]  # protocolo padrão: treinar os outputs na ordem (0, 1, 2, ...)
+        self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao, salvar_dados=self.botao_guardar_dados.isChecked(),train_window=self, protocolo=self.protocolo_personalizado)
         self.aquisicao.conectar()
         self.training_window.show()
             # substituindo a janela de treino pela janela de fim de treino, para testar a nova janela
@@ -195,7 +215,7 @@ class JanelaTreino(QMainWindow):
 
 
 class TrainingWindow(QDialog):
-    def __init__(self, model, duration,aquisicao,salvar_dados=False,train_window=None):
+    def __init__(self, model, duration,aquisicao,salvar_dados=False,train_window=None, protocolo=None):
         super().__init__()
         self.model = model
         self.model_weights = model.get_weights() # Armazena os pesos iniciais do modelo
@@ -204,6 +224,7 @@ class TrainingWindow(QDialog):
         self.salvar_dados = salvar_dados
         self.dados_guardados = []
         self.marcacoes = []
+        self.protocolo = protocolo if protocolo else [i for i in range(len(self.model.outputs))]
         self.output_binario = len(self.model.outputs) == 1
         self.limiar = float(train_window.limiar.text()) if train_window else 0.5 
         incluir_rest = train_window.botao_incluir_rest.isChecked() if train_window else False
@@ -212,17 +233,23 @@ class TrainingWindow(QDialog):
         else:
             self.outputs = len(self.model.outputs) if hasattr(self.model, 'outputs') and isinstance(self.model.outputs, list) else 1
         self.ponteiro = GaugeWidget()
-        self.current_output = 0
+        self.protocol_index = 0
+        self.current_output = self.protocolo[self.protocol_index]
         self.setWindowTitle('Janela de Treino')
         self.resize(600, 400)
         self.layout = QVBoxLayout()
-        self.label = QLabel(f"Treinando output {self.current_output + 1} de {self.outputs}")
+        self.label = QLabel(f"Treinando {self.protocol_index + 1} de {len(self.protocolo)}")
         self.layout.addWidget(self.label)
         self.countdown_label = QLabel("3")
         self.layout.addWidget(self.countdown_label)
         self.layout.addWidget(self.ponteiro)
         self.setLayout(self.layout)
         self.start_countdown()
+        self.timer_receiver = QtCore.QTimer()
+        self.timer_receiver.timeout.connect(self.receive_data)
+        self.timer_receiver.start(200) # verifica se tem dados novos a cada 200ms
+        self.initial_time = time()  # Armazena o tempo inicial para controle de duração
+        self.command_time = []
 
     def start_countdown(self):
         self.count = 3
@@ -238,18 +265,51 @@ class TrainingWindow(QDialog):
             self.start_training()
 
     def start_training(self):
+        self.current_output = self.protocolo[self.protocol_index]
         self.countdown_label.setText("Treinando...")
         QtCore.QTimer.singleShot(self.duration * 1000, self.training_done) # programa o fim do treino para daqui a "duration" segundos
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.training) # chama a função de treino a cada 200ms (5 vezes por segundo)
         self.timer.start(200)
+        self.command_time.append([self.current_output, round(time() - self.initial_time, 4)])  # Armazena o tempo do início do comando para análise posterior
 
+    def training(self):
+        # Aqui você pode adicionar a lógica de treinamento usando self.model e self.aquisicao
+        print('training')
+        #pred = self.aquisicao.predict(self.model)
+        if self.salvar_dados:
+            len_dados = len(self.dados_guardados)
+        epoch = np.array([self.aquisicao.current_data]) # shape (1, time_steps, num_channels)
+        norm = (np.array(epoch) - epoch.min()) / (epoch.max() - epoch.min() + 1e-8)
+        #np.savetxt(f"C:/Users/Enenon/Documents/GitHub/teste/epoch_{len_dados - self.aquisicao.len_data}.txt", norm[0])
+        pred = self.model.predict(norm,verbose=0)[0] # norm[np.newaxis, :, :]
+        #print(self.aquisicao.new_len)
+        if self.output_binario:
+            pred = pred[0]  # Converte para classe binária
+        else:
+            print('não-binário',pred)
+            pred = np.argmax(pred, axis=1)  # Converte para classe multi-classe
+            print('pred pós-argmax',pred)
+        #print(pred)
+        if abs(pred - self.current_output) < self.limiar: # se acertou (predição dentro do limiar), treina com a amostra atual
+            self.label.setText(f"({self.protocol_index + 1} de {len(self.protocolo)}): {self.protocolo[self.protocol_index]} - Acertou!")
+            #self.label.setPalette(self.palette_verde)
+            #self.model.fit(norm, np.array([self.protocol_index]), epochs=1, verbose=0)
+        else:
+            self.label.setText(f"({self.protocol_index + 1} de {len(self.protocolo)}): {self.protocolo[self.protocol_index]} - Errou!")
+            #self.label.setPalette(self.palette_vermelha)
+        self.ponteiro.set_probabilities(1-pred,pred,0)
+        if self.salvar_dados:
+                if self.aquisicao.new_len == 0:
+                    print(self.aquisicao.current_data)
+                self.marcacoes.append([len_dados - self.aquisicao.len_data ,len_dados, round(float(pred),2), self.current_output])
 
     def training_done(self):
         self.timer.stop()
-        self.current_output += 1
-        if self.current_output < self.outputs:
-            self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs}")
+        self.protocol_index += 1
+        if self.protocol_index < len(self.protocolo):
+            self.current_output = self.protocolo[self.protocol_index]
+            self.label.setText(f"({self.protocol_index + 1} de {len(self.protocolo)}): {self.protocolo[self.protocol_index]}")
             self.countdown_label.setText("3")
             self.start_countdown()
         else:
@@ -267,6 +327,9 @@ class TrainingWindow(QDialog):
                 with open("marcacoes.txt", "w") as f:
                     for item in self.marcacoes:
                         f.write("%s\n" % item)
+                    f.write("Tempo dos Comandos:\n")
+                    for item in self.command_time:
+                        f.write("%s\n" % item)
 
             self.treino_concluido_window = EndTrainingWindow(self.model,self)
             self.treino_concluido_window.show()
@@ -280,51 +343,24 @@ class TrainingWindow(QDialog):
                 #print(f"Bias: \n{biases}")
                 print("-" * 20)'''
 
+                
+    def receive_data(self):
+        self.aquisicao.adquirir()
+        if self.salvar_dados:
+            if len(self.dados_guardados) == 0: # se for o primeiro chunk, salva tudo o que tiver no buffer, senão salva só o que for novo
+                new_chunk = self.aquisicao.len_data
+            else:
+                new_chunk = self.aquisicao.new_len
+            self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data - new_chunk:, :].tolist() # salva os dados adquiridos durante o treino, para análise posterior
+            print(len(self.dados_guardados), len(self.aquisicao.current_data), self.aquisicao.len_data, self.aquisicao.new_len)
 
-    def training(self):
-        # Aqui você pode adicionar a lógica de treinamento usando self.model e self.aquisicao
-        print('training')
-        if not self.aquisicao.adquirir(): return #assim, só quando tiver chunk novo ele faz o treino e armazena os novos dados em self.dados_guardados
-        else:
-            #pred = self.aquisicao.predict(self.model)
-            epoch = np.array([self.aquisicao.current_data]) # shape (1, time_steps, num_channels)
-            norm = (np.array(epoch) - epoch.min()) / (epoch.max() - epoch.min() + 1e-8)
-            pred = self.model.predict(norm,verbose=0)[0] # norm[np.newaxis, :, :]
-            #print(self.aquisicao.new_len)
-            if self.output_binario:
-                pred = pred[0]  # Converte para classe binária
-            else:
-                print('não-binário',pred)
-                pred = np.argmax(pred, axis=1)  # Converte para classe multi-classe
-                print('pred pós-argmax',pred)
-            #print(pred)
-            if abs(pred - self.current_output) < self.limiar: # se acertou (predição dentro do limiar), treina com a amostra atual
-                self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Acertou!")
-                #self.label.setPalette(self.palette_verde)
-                self.model.fit(norm, np.array([self.current_output]), epochs=1, verbose=0)
-            else:
-                self.label.setText(f"Treinando output {self.current_output + 1} de {self.outputs} - Errou!")
-                #self.label.setPalette(self.palette_vermelha)
-            self.ponteiro.set_probabilities(1-pred,pred,0)
-            if self.salvar_dados:
-                    if len(self.dados_guardados) == 0: # se for o primeiro chunk, salva tudo o que tiver no buffer, senão salva só o que for novo
-                        new_chunk = self.aquisicao.len_data
-                    else:
-                        new_chunk = self.aquisicao.new_len
-                    self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data-new_chunk:, :].tolist() # salva os dados adquiridos durante o treino, para análise posterior
-                    print(len(self.dados_guardados),len(self.aquisicao.current_data),self.aquisicao.len_data,self.aquisicao.new_len)
-                    if self.aquisicao.new_len == 0:
-                        print(self.aquisicao.current_data)
-                    
-                    len_dados = len(self.dados_guardados)
-                    self.marcacoes.append([len_dados - self.aquisicao.len_data ,len_dados, round(float(pred),2), self.current_output])
 
 class EndTrainingWindow(QDialog):
     def __init__(self, model, janela_treino=None):
         super().__init__()
         self.model = model
         self.janela_treino = janela_treino
-        self.current_output = 0
+        self.protocol_index = 0
         self.setWindowTitle('Finalização do Treino')
         self.resize(600, 400)
         self.layout = QVBoxLayout(self)

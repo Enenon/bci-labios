@@ -21,7 +21,7 @@ from matplotlib.figure import Figure
 
 import numpy as np
 from pylsl import StreamInlet, resolve_stream, resolve_byprop
-from time import sleep
+from time import sleep, time
 import matplotlib.pyplot as plt
 from random import choice
 import threading
