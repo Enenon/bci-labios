@@ -257,9 +257,15 @@ class TrainingWindow(QDialog):
         self.timer.timeout.connect(self.update_countdown) # atualiza a contagem de 1 em 1 segundo
         self.timer.start(1000)
 
+
     def update_countdown(self):
         self.countdown_label.setText(str(self.count))
         self.count -= 1
+        if self.salvar_dados:
+            len_dados = len(self.dados_guardados)
+            if self.aquisicao.new_len == 0:
+                print(self.aquisicao.current_data)
+            self.marcacoes.append([len_dados - self.aquisicao.len_data ,len_dados, -1, -1]) # marcação de início do comando, com -1 para indicar que não é uma predição
         if self.count < 0: # quando chega a 0, inicia o treino
             self.timer.stop()
             self.start_training()
