@@ -3,6 +3,8 @@ from pyexpat import model
 from dependencias import *
 from aquisicao import Aquisicao
 
+
+
 class GaugeWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -27,7 +29,7 @@ class GaugeWidget(QWidget):
             self.base_angle += diff * 0.15
             
         tremor_maximo_graus = 15.0 
-        tremor_atual = uniform(-1.0, 1.0) * (self.incerteza * tremor_maximo_graus)
+        tremor_atual = random.uniform(-1.0, 1.0) * (self.incerteza * tremor_maximo_graus)
         self.current_angle = self.base_angle + tremor_atual
         self.update()
 
@@ -156,6 +158,8 @@ class JanelaTreino(QMainWindow):
             self.aquisicao = aquisicao
         else:
             self.aquisicao = Aquisicao(len_data=512, num_canais=16)
+
+        aplicar_estilo_escuro(self)
 
     def toggle_protocolo_personalizado(self, state):
         if state == QtCore.Qt.Checked:
@@ -289,6 +293,7 @@ class TrainingWindow(QDialog):
         if self.salvar_dados:
             len_dados = len(self.dados_guardados)
         epoch = np.array([self.aquisicao.current_data]) # shape (1, time_steps, num_channels)
+        print('len',len(epoch), epoch.shape, self.aquisicao.current_data.shape)
         norm = (np.array(epoch) - epoch.min()) / (epoch.max() - epoch.min() + 1e-8)
         #np.savetxt(f"C:/Users/Enenon/Documents/GitHub/teste/epoch_{len_dados - self.aquisicao.len_data}.txt", norm[0])
         pred = self.model.predict(norm,verbose=0)[0] # norm[np.newaxis, :, :]
@@ -354,7 +359,8 @@ class TrainingWindow(QDialog):
 
                 
     def receive_data(self):
-        self.aquisicao.adquirir()
+        if __name__ == '__main__': # se estiver rodando como script principal, adquire os dados
+            self.aquisicao.adquirir()
         if self.salvar_dados:
             if len(self.dados_guardados) == 0: # se for o primeiro chunk, salva tudo o que tiver no buffer, senão salva só o que for novo
                 new_chunk = self.aquisicao.len_data

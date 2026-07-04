@@ -1,11 +1,10 @@
 ﻿from dependencias import *
 
 
-
-
 import os
 
 from aquisicao import Aquisicao
+from unitysender import UnitySender
 from janela_treino import *
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
@@ -16,7 +15,7 @@ class JanelaInicial(QMainWindow):
         super().__init__()
         self.resize(1250,850)
         self.setWindowTitle('BCI Labios')
-        self.aplicar_estilo_escuro()
+        aplicar_estilo_escuro(self)
 
         # --- Variáveis de Sistema ---
         self.unity = None
@@ -83,26 +82,7 @@ class JanelaInicial(QMainWindow):
 
         self.setup_menu()
 
-        
 
-
-    def aplicar_estilo_escuro(self):
-        qss = """
-        QMainWindow, QWidget { background-color: #2b2b2b; color: #ffffff; font-family: 'Segoe UI', Arial; }
-        QGroupBox { border: 1px solid #444; border-radius: 5px; margin-top: 10px; font-weight: bold; background-color: #2b2b2b; }
-        QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 5px; background-color: #2b2b2b; color: #aaaaaa; }
-        QPushButton { background-color: #3c3f41; border: 1px solid #555; border-radius: 4px; padding: 5px; color: white; }
-        QPushButton:hover { background-color: #484b4d; }
-        QTabWidget::pane { border: 1px solid #444; background-color: #2b2b2b; }
-        QTabBar::tab { background: #2b2b2b; color: #888888; padding: 8px 25px; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; font-weight: bold; }
-        QTabBar::tab:selected { background: #3c3f41; color: #ffffff; border-bottom: 3px solid #00bcd4; }
-        QComboBox, QSpinBox, QDoubleSpinBox { background: #3c3f41; border: 1px solid #555; padding: 3px; color: white; }
-        QProgressBar { border: 1px solid #555; text-align: center; color: white; }
-        QProgressBar::chunk { background-color: #00bcd4; }
-        QCheckBox { color: white; spacing: 5px; }
-        QCheckBox::indicator { width: 15px; height: 15px; }
-        """
-        self.setStyleSheet(qss)
 
     def setup_tabs(self):
         self.tab_time = QWidget()
@@ -200,8 +180,9 @@ class JanelaInicial(QMainWindow):
     def setup_menu(self):
         menu = self.menuBar().addMenu('Arquivo')
         menu.addAction('Carregar Modelo').triggered.connect(self.abrir_modelo)
-
-        self.menuBar().addAction('Janela treino').triggered.connect(self.abrir_janela_treino)
+        menu = self.menuBar().addMenu('Treino')
+        menu.addAction('Janela VR').triggered.connect(self.abrir_janela_vr)
+        menu.addAction('Janela treino').triggered.connect(self.abrir_janela_treino)
 
 
     def setup_painel_esquerdo(self):
@@ -426,6 +407,10 @@ class JanelaInicial(QMainWindow):
         self.janela_treino = JanelaTreino(aquisicao=self.aquisicao)
         self.janela_treino.show()
 
+    def abrir_janela_vr(self):
+        self.janela_vr = JanelaTrial(aquisicao=self.aquisicao)
+        self.janela_vr.show()
+
     def abrir_janela_teste(self):   
         self.janela_teste = JanelaTeste()
 
@@ -574,9 +559,413 @@ class JanelaPlot(QMainWindow):
         self.janelaPrincipal.FFT_especifico_freq1 = int(num1)
         self.janelaPrincipal.FFT_especifico_freq2 = int(num2)
 
+class JanelaTrial(QMainWindow):
+    def __init__(self, aquisicao=None):
+        super().__init__()
+        self.setGeometry(200,200,350,50)
+        self.setWindowTitle('Trial')
+        self.centralwidget = QWidget(self); self.setCentralWidget(self.centralwidget)
+        self.main_layout = QHBoxLayout(self.centralwidget)
+        self.panel_left = QFrame(); self.panel_left.setFixedWidth(400); self.layout_left = QVBoxLayout(self.panel_left)
+        #self.label = QLabel("Trial em andamento...",self)
+        #self.label.setGeometry(QtCore.QRect(1,8,100,23))
+        #font = self.label.font()
+        #font.setPointSize(20)
+        #self.label.setFont(font)
+        #self.label.adjustSize()
+
+        # --- Variáveis de Sistema ---
+        self.buffer_sobra = []
+
+        # --- Modelo ---
+        group_modelo = QGroupBox("1. Modelo")
+        layout_modelo = QVBoxLayout()
+        self.lbl_status_modelo = QLabel("Status: Sem modelo carregado"); self.lbl_status_modelo.setStyleSheet("color: #ff5555;")
+        self.botao_abrir_modelo = QPushButton('🤖 Abrir Modelo', self)
+        self.botao_abrir_modelo.clicked.connect(self.abrir_modelo)
+        layout_modelo.addWidget(self.lbl_status_modelo); layout_modelo.addWidget(self.botao_abrir_modelo)
+        group_modelo.setLayout(layout_modelo); self.layout_left.addWidget(group_modelo)
+
+        self.unity = None; self.inlet = None; self.model = None
+        # --- UNITY ---
+        group_unity = QGroupBox("2. Ambiente Virtual")
+        layout_unity = QVBoxLayout()
+        self.lbl_status_unity = QLabel("Status: Desconectado"); self.lbl_status_unity.setStyleSheet("color: #ff5555;")
+        self.btn_conectar_unity = QPushButton("🎮 Conectar ao Unity (ZMQ)")
+        self.btn_conectar_unity.clicked.connect(self.conectar_unity)
+        layout_unity.addWidget(self.lbl_status_unity); layout_unity.addWidget(self.btn_conectar_unity)
+        group_unity.setLayout(layout_unity); self.layout_left.addWidget(group_unity)
+
+        # --- EXPERIMENTO ---
+        group_acoes = QGroupBox("3. Execução do Experimento")
+        layout_acoes = QVBoxLayout()
+        
+        self.btn_paradigma = QPushButton("🎯 PASSO 1: Protocolo de Gravação Visual (Cues)")
+        self.btn_paradigma.setStyleSheet("background-color: #ff9800; color: black; font-weight: bold; padding: 12px; font-size: 13px;")
+        self.btn_paradigma.clicked.connect(self.abrir_gravacao_paradigma)
+        layout_acoes.addWidget(self.btn_paradigma)
+
+        # Configurações Dinâmicas de Quantidade e Shape
+        form_parametros = QFormLayout()
+        
+        self.spin_trials_ia = QSpinBox()
+        self.spin_trials_ia.setRange(1, 100); self.spin_trials_ia.setValue(10); self.spin_trials_ia.setSuffix(" trials/classe")
+        
+        self.spin_shape_time = QSpinBox()
+        self.spin_shape_time.setRange(10, 5000); self.spin_shape_time.setValue(721); self.spin_shape_time.setSuffix(" pts")
+        
+        self.spin_shape_ch = QSpinBox()
+        self.spin_shape_ch.setRange(1, 32); self.spin_shape_ch.setValue(16); self.spin_shape_ch.setSuffix(" canais")
+        
+        form_parametros.addRow("Duração da Sessão IA:", self.spin_trials_ia)
+        form_parametros.addRow("Shape do Modelo (T):", self.spin_shape_time)
+        form_parametros.addRow("Shape do Modelo (C):", self.spin_shape_ch)
+        layout_acoes.addLayout(form_parametros)
+
+        # Controle Flexível de Transfer Learning!
+        self.combo_tl = QComboBox()
+        self.combo_tl.addItems([
+            "Somente Avaliação/Teste (0% Treino)", 
+            "Treino Contínuo (100% Transfer Learning)", 
+            "Misto (20% Treino Inicial -> Teste)"
+        ])
+        self.combo_tl.setCurrentIndex(2) # Default para Misto
+        layout_acoes.addWidget(QLabel("Estratégia de Aprendizado (Transfer Learning):"))
+        layout_acoes.addWidget(self.combo_tl)
+
+        self.dados_arquivo = None; self.dados_offline = False
+        self.dados_arquivo_checkbox = QCheckBox("Usar Arquivo CSV como Fonte de Dados (Offline)")
+        self.dados_arquivo_checkbox.stateChanged.connect(self.toggle_modo_dados)
+        self.abrir_arquivo_btn = QPushButton("📂 Abrir CSV")
+        self.abrir_arquivo_btn.clicked.connect(self.abrir_arquivo_csv)
+        self.abrir_arquivo_btn.setEnabled(False) # Desabilitado até que o checkbox seja marcado
+        layout_acoes.addWidget(self.dados_arquivo_checkbox)
+        layout_acoes.addWidget(self.abrir_arquivo_btn)
+        
+        self.btn_iniciar_ia = QPushButton("🧠 PASSO 2: Iniciar Sessão Live IA (Hands)")
+        self.btn_iniciar_ia.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; padding: 12px; font-size: 13px;")
+        self.btn_iniciar_ia.clicked.connect(self.iniciar_sessao_ml)
+        layout_acoes.addWidget(self.btn_iniciar_ia)
+
+        group_acoes.setLayout(layout_acoes); self.layout_left.addWidget(group_acoes)
+
+        # --- MONITORAMENTO ---
+        group_mon = QGroupBox("Monitoramento em Tempo Real")
+        layout_mon = QVBoxLayout()
+        self.lbl_progresso = QLabel("Progresso: Aguardando..."); self.lbl_progresso.setAlignment(QtCore.Qt.AlignCenter)
+        self.bar_progresso = QProgressBar(); self.bar_progresso.setValue(0)
+        self.lbl_fase = QLabel("FASE: Parado"); self.lbl_fase.setStyleSheet("color: yellow; font-weight: bold;"); self.lbl_fase.setAlignment(QtCore.Qt.AlignCenter)
+        layout_mon.addWidget(self.lbl_progresso); layout_mon.addWidget(self.bar_progresso); layout_mon.addWidget(self.lbl_fase)
+
+        self.lbl_predicao = QLabel("--"); self.lbl_predicao.setFont(QtGui.QFont("Arial", 18, QtGui.QFont.Bold)); self.lbl_predicao.setAlignment(QtCore.Qt.AlignCenter)
+        self.gauge = GaugeWidget()
+        layout_mon.addWidget(self.lbl_predicao); layout_mon.addWidget(self.gauge)
+        group_mon.setLayout(layout_mon); self.layout_left.addWidget(group_mon)
+
+        self.layout_left.addStretch()
+        self.main_layout.addWidget(self.panel_left)
+
+        aplicar_estilo_escuro(self)
+        #self.show()
+
+    def toggle_modo_dados(self, state):
+        self.abrir_arquivo_btn.setEnabled(state == QtCore.Qt.Checked)
+        self.dados_offline = (state == QtCore.Qt.Checked)
+
+    def abrir_modelo(self):
+        if usar_modelo:
+            try:
+                fname = QFileDialog.getOpenFileName(self, 'Open file', 
+        '../',"Model files (*.h5)")
+                print(fname)
+
+                self.model = load_model(fname[0])
+                self.model.compile(optimizer=Adam(1e-4), loss='binary_crossentropy', metrics=['accuracy'])
+                self.lbl_status_modelo.setText("Status: Modelo carregado. Shape: " + str(self.model.input_shape)); self.lbl_status_modelo.setStyleSheet("color: #00e676;")
+
+                #self.aquisicao = Aquisicao(len_data=self.model.input_shape[1], num_canais=self.model.input_shape[2])
+                #self.output_binario = len(self.model.outputs) == 1
+                #if self.output_binario:
+                #    self.botao_incluir_rest.setEnabled(True) # se for binário, pode incluir intervalo como terceira classe
+                #    self.limiar.setEnabled(True) # se for binário, faz sentido usar um limiar de acerto
+            except:
+                QMessageBox.warning(self, 'Aviso', 'Modelo incompatível.')
+        else: return
+
+    def abrir_arquivo_csv(self):
+        fname, _ = QFileDialog.getOpenFileName(self, 'Abrir Gravação Offline', '', "Arquivos CSV (*.csv)")
+        if fname:
+            try:
+                df = pd.read_csv(fname, comment='%'); self.dados_arquivo = df.iloc[:, 1 : self.n_ch + 1].values; self.ponteiro_arquivo = 0
+                self.lbl_fonte_status.setText(f"CSV Ativo: {fname.split('/')[-1]} ({len(self.dados_arquivo)} linhas)"); self.lbl_fonte_status.setStyleSheet("color: #00e676;")
+            except Exception as e: QMessageBox.critical(self, "Erro", f"O arquivo CSV está corrompido ou é inválido.\nDetalhe: {e}")
+
+    def conectar_unity(self):
+        if not self.unity:
+            try:
+                self.unity = UnitySender(); self.lbl_status_unity.setText("Status: Conectado (ZMQ Porta 5555)"); self.lbl_status_unity.setStyleSheet("color: #00e676;"); self.btn_conectar_unity.setEnabled(False)
+            except Exception as e: QMessageBox.critical(self, "Erro de Rede", f"Não foi possível criar servidor ZMQ.\n{e}")
+
+    def iniciar_sessao_ml(self):
+        try:
+            if self.modo_dados == "ONLINE" and not self.inlet:
+                return QMessageBox.warning(self, "Aviso", "Conecte o LSL primeiro.")
+            if self.modo_dados == "OFFLINE" and self.dados_arquivo is None:
+                return QMessageBox.warning(self, "Aviso", "Abra um arquivo CSV primeiro.")
+        except:
+            pass
+
+        if self.dados_offline:
+            class AquisicaoOffline(self):
+                def __init__(self):
+                    self.currend_data = []
+            self.aquisicao = AquisicaoOffline()
+            self.timer_atualizacao_offline = QTCore.QTimer()
+        # Cria o Gabarito com base no SpinBox e embaralha para a sessão da IA
+        rep_por_classe = self.spin_trials_ia.value()
+        self.gabarito_sessao = [0]*rep_por_classe + [1]*rep_por_classe + [2]*rep_por_classe
+        random.shuffle(self.gabarito_sessao)
+        self.total_tentativas = len(self.gabarito_sessao)
+
+        # Lógica de Controle do Transfer Learning
+        estrategia_tl = self.combo_tl.currentText()
+        if "Misto" in estrategia_tl:
+            self.qtd_tl = int(self.total_tentativas * 0.2) # Usa 20%
+        elif "Treino Contínuo" in estrategia_tl:
+            self.qtd_tl = self.total_tentativas # Treina em todos
+        else:
+            self.qtd_tl = 0 # Nunca treina
+            
+        self.indice_atual = 0; self.acertos_fase1 = 0; self.acertos_fase2 = 0; self.log_sessao = []
+        
+        self.btn_iniciar_ia.setEnabled(False); self.btn_iniciar_ia.setText("Sessão Live Rodando...")
+        self.bar_progresso.setMaximum(self.total_tentativas); self.bar_progresso.setValue(0)
+        
+        self.timer_sessao = QtCore.QTimer(); self.timer_sessao.timeout.connect(self.loop_sessao_ml); self.timer_sessao.start(10)
+        if self.dados_offline:
+            self.timer_atualizacao_offline.timeout.connect(self.atualizar_dados_offline)
+            self.timer_atualizacao_offline.start(100)
+
+    def loop_sessao_ml(self):
+        target_time = self.spin_shape_time.value()
+        target_ch = self.spin_shape_ch.value()
+        
+        if len(self.buffer_sobra) >= target_time:
+            if self.indice_atual >= self.total_tentativas: 
+                self.finalizar_sessao()
+                return
+            
+            dados_para_ia = self.aquisicao.current_data[(self.len_data - self.modelo.input_shape[1]):self.len_data, :target_ch]
+            #raw_epoch = np.array(self.buffer_sobra[:target_time])
+            self.buffer_sobra = self.buffer_sobra[target_time:] 
+            #dados_para_ia = raw_epoch[:, :target_ch]
+            self.classificar_e_treinar(dados_para_ia)
+
+    def atualizar_dados_offline(self):
+        chunk_size = 3
+        if self.ponteiro_arquivo + chunk_size < len(self.dados_arquivo):
+                self.aquisicao.current_data = self.dados_arquivo[self.ponteiro_arquivo : self.ponteiro_arquivo + chunk_size]
+                self.ponteiro_arquivo += chunk_size; self.buffer_sobra.extend(self.aquisicao.current_data)
 
 
+    def classificar_e_treinar(self, dados):
+        lbl_real = self.gabarito_sessao[self.indice_atual]
+        pred = 2; prob = [0.0, 0.0, 1.0]
 
+        if not self.model:
+            QMessageBox.warning(self, 'Aviso', 'Carregue um modelo primeiro.')
+            return
+            pred = random.randint(0, 2); prob = [1.0 if i==pred else 0.0 for i in range(3)]
+        else:
+            dados_norm = (dados - dados.min()) / (dados.max() - dados.min() + 1e-8)
+            input_data = np.expand_dims(dados_norm, axis=0).astype(np.float32)
+            try:
+                res = self.model.predict(input_data, verbose=0)[0]
+                pred = np.argmax(res); prob = res
+            except Exception as e: print(f"Erro na predição: {e}")
+
+        # Salva o Log no Dicionário
+        self.log_sessao.append({
+            'Tentativa': self.indice_atual + 1, 'Timestamp': datetime.now().strftime('%H:%M:%S.%f'),
+            'Label_Verdadeiro': lbl_real, 'Predicao_IA': pred,
+            'Prob_Esq': round(prob[0], 4), 'Prob_Dir': round(prob[1], 4), 'Prob_Rep': round(prob[2], 4)
+        })
+
+        fase_nome = "TREINAMENTO (TL)" if self.indice_atual < self.qtd_tl else "AVALIAÇÃO DE DESEMPENHO"
+        self.lbl_fase.setText(f"FASE: {fase_nome}")
+        self.lbl_fase.setStyleSheet(f"color: {'yellow' if self.indice_atual < self.qtd_tl else '#00e676'}; font-weight: bold;")
+        self.lbl_progresso.setText(f"Progresso: Época {self.indice_atual+1} / {self.total_tentativas}")
+        self.bar_progresso.setValue(self.indice_atual + 1)
+        
+        nomes = ["MÃO ESQUERDA", "MÃO DIREITA", "REPOUSO"]; cores = ["#00bcd4", "#ff4081", "#ffffff"]
+        self.lbl_predicao.setText(nomes[pred]); self.lbl_predicao.setStyleSheet(f"color: {cores[pred]}")
+        self.gauge.set_probabilities(prob[0], prob[1], prob[2])
+
+        acertou = (pred == lbl_real)
+
+        # Envia comando de MOVIMENTO para o Unity
+        if self.unity:
+            if pred == 0: self.unity.send("HAND_LEFT")
+            elif pred == 1: self.unity.send("HAND_RIGHT")
+            else: self.unity.send("HAND_REST")
+
+        # FINE TUNING (O Ouro da Pesquisa)
+        if self.modo_dados != "TESTE" and self.model and self.indice_atual < self.qtd_tl:
+            if acertou: 
+                self.acertos_fase1 += 1
+                d_norm = (dados - dados.min()) / (dados.max() - dados.min() + 1e-8)
+                inp = np.expand_dims(d_norm, axis=0).astype(np.float32)
+                target = np.array([lbl_real]).astype(np.float32)
+                for _ in range(EPOCHS_TREINO): self.model.train_on_batch(inp, target)
+        elif self.modo_dados != "TESTE" and acertou:
+            self.acertos_fase2 += 1
+
+        self.indice_atual += 1
+
+    def finalizar_sessao(self):
+        self.timer_sessao.stop()
+        self.btn_iniciar_ia.setEnabled(True); self.btn_iniciar_ia.setText("🧠 PASSO 2: Iniciar Sessão Live IA (Hands)")
+        if self.unity: self.unity.send("HAND_REST")
+
+        mensagem_final = "A sessão terminou com sucesso!"
+        if len(self.log_sessao) > 0:
+            try:
+                df_log = pd.DataFrame(self.log_sessao)
+                nome_csv = f"bci_sessao_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                df_log.to_csv(nome_csv, index=False)
+                mensagem_final += f"\n\nOs resultados foram salvos na pasta raiz em:\n{nome_csv}"
+            except Exception as e: mensagem_final += f"\n\nATENÇÃO: Falha ao salvar arquivo CSV. {e}"
+
+        if self.modo_dados != "TESTE":
+            total_teste = self.total_tentativas - self.qtd_tl
+            acc_treino = (self.acertos_fase1 / self.qtd_tl) * 100 if self.qtd_tl > 0 else 0
+            acc_teste = (self.acertos_fase2 / total_teste) * 100 if total_teste > 0 else 0
+            mensagem_final += f"\n\nEstatísticas da IA:\nAcertos no Treino (TL): {acc_treino:.1f}%\nAcertos no Teste Real: {acc_teste:.1f}%"
+
+        QMessageBox.information(self, "Fim de Sessão", mensagem_final)
+
+    def abrir_gravacao_paradigma(self):
+        win_config = JanelaConfiguracaoParadigma(self.unity is not None)
+        if win_config.exec_() == QDialog.Accepted:
+            configs = win_config.configs
+            self.paradigma_win = JanelaExecucaoParadigma(configs, unity_sender=self.unity)
+            self.paradigma_win.sessao_concluida.connect(self.receber_gabarito_da_gravacao)
+            self.paradigma_win.show() 
+
+    def receber_gabarito_da_gravacao(self):
+        QMessageBox.information(self, "Coleta Concluída", "Protocolo visual encerrado.")
+
+class JanelaExecucaoParadigma(QDialog):
+    sessao_concluida = pyqtSignal()
+
+    def __init__(self, configs, unity_sender=None):
+        super().__init__()
+        self.configs = configs; self.unity = unity_sender
+        
+        # Gera o Gabarito na hora: Ex [0,0..., 1,1..., 2,2...]
+        self.sequencia_trials = [0]*configs['repeticoes'] + [1]*configs['repeticoes'] + [2]*configs['repeticoes']
+        random.shuffle(self.sequencia_trials)
+        
+        self.trial_atual = 0; self.total_trials = len(self.sequencia_trials); self.estado_atual = "INICIO" 
+        
+        self.setWindowTitle("Coleta Visual (Cues)")
+        self.resize(800, 600); self.setStyleSheet("background-color: black; color: white;")
+        layout = QVBoxLayout(self)
+        
+        self.lbl_info = QLabel(f"Preparando sessão... Total: {self.total_trials}"); self.lbl_info.setStyleSheet("font-size: 16px; color: gray;"); self.lbl_info.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.lbl_info)
+
+        self.lbl_estimulo = QLabel("Pronto?"); self.lbl_estimulo.setAlignment(Qt.AlignCenter); self.lbl_estimulo.setStyleSheet("font-size: 120px; font-weight: bold;")
+        layout.addWidget(self.lbl_estimulo, 1)
+
+        self.timer_logica = QTimer(self); self.timer_logica.setSingleShot(True); self.timer_logica.timeout.connect(self.proximo_estado); self.timer_logica.start(2000)
+
+    def desenhar_tela(self, texto, tamanho, cor, info):
+        if self.configs['usar_python']:
+            self.lbl_estimulo.setText(texto); self.lbl_estimulo.setStyleSheet(f"font-size: {tamanho}px; color: {cor}; font-weight: bold;")
+            self.lbl_info.setText(info)
+        else:
+            self.lbl_estimulo.setText("Transmitindo para o Unity..."); self.lbl_estimulo.setStyleSheet("font-size: 40px; color: #aaaaaa;")
+            self.lbl_info.setText(info)
+
+    def proximo_estado(self):
+        if self.trial_atual >= self.total_trials:
+            if self.configs['usar_unity'] and self.unity: self.unity.send("CUE_REST")
+            self.estado_atual = "CONCLUIDO"
+            self.desenhar_tela("Concluído!", 80, "#00e676", "Pode fechar esta janela.")
+            self.sessao_concluida.emit(); return
+
+        classe_alvo = self.sequencia_trials[self.trial_atual]
+
+        if self.estado_atual == "INICIO" or self.estado_atual == "REPOUSO":
+            self.estado_atual = "AVISO"
+            if self.configs['usar_unity'] and self.unity: self.unity.send("CUE_CROSS") 
+            self.desenhar_tela("➕", 150, "white", f"Estímulo {self.trial_atual + 1}/{self.total_trials} - Foco")
+            self.timer_logica.start(self.configs['t_aviso'])
+            
+        elif self.estado_atual == "AVISO":
+            self.estado_atual = "ACAO"
+            if classe_alvo == 0:
+                if self.configs['usar_unity'] and self.unity: self.unity.send("CUE_LEFT") 
+                self.desenhar_tela("⬅️", 180, "#00bcd4", "AÇÃO: Mão Esquerda")
+            elif classe_alvo == 1:
+                if self.configs['usar_unity'] and self.unity: self.unity.send("CUE_RIGHT") 
+                self.desenhar_tela("➡️", 180, "#ff4081", "AÇÃO: Mão Direita")
+            elif classe_alvo == 2:
+                if self.configs['usar_unity'] and self.unity: self.unity.send("CUE_REST") 
+                self.desenhar_tela("🛑", 150, "#ffeb3b", "AÇÃO: Repouso")
+            self.timer_logica.start(self.configs['t_acao'])
+            
+        elif self.estado_atual == "ACAO":
+            self.estado_atual = "REPOUSO"
+            if self.configs['usar_unity'] and self.unity: self.unity.send("CUE_REST") 
+            self.desenhar_tela("", 150, "white", "Descanso...")
+            self.trial_atual += 1; self.timer_logica.start(self.configs['t_repouso'])
+
+class JanelaConfiguracaoParadigma(QDialog):
+    def __init__(self, unity_conectado):
+        super().__init__()
+        self.setWindowTitle("Configuração de Cues (Visual)")
+        self.resize(450, 400); self.setStyleSheet("background-color: #2b2b2b; color: white;")
+        layout = QVBoxLayout(self)
+
+        lbl_titulo = QLabel("Configuração de Tempos (Cues)")
+        lbl_titulo.setStyleSheet("font-size: 16px; font-weight: bold; color: #00bcd4;"); lbl_titulo.setAlignment(Qt.AlignCenter); layout.addWidget(lbl_titulo)
+
+        group_tempos = QGroupBox("Tempos do Relógio Principal")
+        form_tempos = QFormLayout()
+        
+        self.spin_aviso = QDoubleSpinBox(); self.spin_aviso.setRange(0.5, 5.0); self.spin_aviso.setValue(1.5); self.spin_aviso.setSuffix(" s")
+        self.spin_acao = QDoubleSpinBox(); self.spin_acao.setRange(1.0, 10.0); self.spin_acao.setValue(3.0); self.spin_acao.setSuffix(" s")
+        self.spin_repouso = QDoubleSpinBox(); self.spin_repouso.setRange(1.0, 10.0); self.spin_repouso.setValue(2.0); self.spin_repouso.setSuffix(" s")
+        self.spin_repeticoes = QSpinBox(); self.spin_repeticoes.setRange(1, 100); self.spin_repeticoes.setValue(10); self.spin_repeticoes.setSuffix(" trials/classe")
+        
+        form_tempos.addRow("Aviso (Cruz ➕):", self.spin_aviso)
+        form_tempos.addRow("Ação (Seta ⬅️➡️):", self.spin_acao)
+        form_tempos.addRow("Repouso (Preta):", self.spin_repouso)
+        form_tempos.addRow("Qtd Repetições:", self.spin_repeticoes)
+        group_tempos.setLayout(form_tempos); layout.addWidget(group_tempos)
+
+        group_alvos = QGroupBox("Exibir estímulos em:")
+        layout_alvos = QVBoxLayout()
+        self.chk_python = QCheckBox("Interface Python (2D)"); self.chk_python.setChecked(True)
+        self.chk_unity = QCheckBox("Ambiente Unity (3D)"); self.chk_unity.setChecked(unity_conectado); self.chk_unity.setEnabled(unity_conectado)
+        if not unity_conectado: self.chk_unity.setText("Mostrar no Unity (Requer conexão)")
+        layout_alvos.addWidget(self.chk_python); layout_alvos.addWidget(self.chk_unity); group_alvos.setLayout(layout_alvos); layout.addWidget(group_alvos)
+
+        layout.addStretch()
+        self.btn_iniciar = QPushButton("▶ COMEÇAR PARADIGMA VISUAL")
+        self.btn_iniciar.setStyleSheet("background-color: #00bcd4; color: black; font-weight: bold; padding: 12px;")
+        self.btn_iniciar.clicked.connect(self.aceitar_configuracao); layout.addWidget(self.btn_iniciar)
+
+    def aceitar_configuracao(self):
+        if not self.chk_python.isChecked() and not self.chk_unity.isChecked():
+            return QMessageBox.warning(self, "Aviso", "Selecione pelo menos um local para exibir os estímulos!")
+        self.configs = {
+            't_aviso': int(self.spin_aviso.value() * 1000), 't_acao': int(self.spin_acao.value() * 1000), 't_repouso': int(self.spin_repouso.value() * 1000), 
+            'repeticoes': self.spin_repeticoes.value(), 'usar_python': self.chk_python.isChecked(), 'usar_unity': self.chk_unity.isChecked()
+        }
+        self.accept()
 
 class JanelaTeste(QMainWindow):
     def __init__(self):
@@ -676,54 +1065,6 @@ class UnitySender_old:
     def stop(self):
         self.running = False
 
-class UnitySender:
-    def __init__(self, port=PORTA_UNITY, udp_port=PORTA_UDP_UNITY):
-        self.port = port; self.udp_port = udp_port; self.context = zmq.Context(); self.socket = self.context.socket(zmq.PUB)
-        try: self.socket.setsockopt(zmq.CONFLATE, 1)
-        except Exception: pass 
-        try: self.socket.bind(f"tcp://*:{port}")
-        except Exception as e: print(f"Erro ao ligar a porta ZMQ: {e}") 
-
-        self.local_ip = self.get_local_ip()
-        self.send_ip_udp_broadcast()
-        self.queue = []; self.lock = threading.Lock(); self.running = True
-        self.thread = threading.Thread(target=self.sender_loop, daemon=True); self.thread.start()
-
-    def get_local_ip(self):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(("8.8.8.8", 80)); ip = s.getsockname()[0]; s.close(); return ip
-        except Exception: return "127.0.0.1"
-
-    def send_ip_udp_broadcast(self):
-        def _broadcast():
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP); s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            while self.running:
-                try: s.sendto(self.local_ip.encode(), ('<broadcast>', self.udp_port)); time.sleep(1.0) 
-                except Exception: pass
-            s.close()
-        threading.Thread(target=_broadcast, daemon=True).start()
-
-    def send(self, msg):
-        with self.lock: self.queue.append(msg)
-
-    def sender_loop(self):
-        last_ping = time.time()
-        while self.running:
-            with self.lock:
-                if self.queue:
-                    msg_to_send = str(self.queue.pop(0))
-                    try: self.socket.send_string(msg_to_send)
-                    except Exception: pass
-            if time.time() - last_ping > 1.0:
-                try: self.socket.send_string("CONNECTED")
-                except Exception: pass
-                last_ping = time.time()
-            time.sleep(0.01) 
-
-    def stop(self):
-        self.running = False
-        try: self.socket.close(); self.context.term()
-        except Exception: pass
 
 if __name__ == '__main__':
     def window():
