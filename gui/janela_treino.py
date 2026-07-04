@@ -202,8 +202,11 @@ class JanelaTreino(QMainWindow):
             return
         if self.protocolo_personalizado_checkBox.isChecked():
             self.protocolo_personalizado = [int(x.strip()) for x in self.protocolo_line.text().split(',')]
+        elif self.output_binario:
+            self.protocolo_personalizado = [0, 1]
         else:
             self.protocolo_personalizado = [i for i in range(len(self.model.outputs))]  # protocolo padrão: treinar os outputs na ordem (0, 1, 2, ...)
+        print('Protocolo de treino:', self.protocolo_personalizado)
         self.training_window = TrainingWindow(self.model, duration,aquisicao=self.aquisicao, salvar_dados=self.botao_guardar_dados.isChecked(),train_window=self, protocolo=self.protocolo_personalizado)
         self.aquisicao.conectar()
         self.training_window.show()
