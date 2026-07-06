@@ -261,7 +261,7 @@ class JanelaInicial(QMainWindow):
         if self.modo_teste_unity:
             data = np.random.randn(3, self.n_channels_hardware) * 50 
             self.sincronizado = True
-            self.buffer_sobra.extend(data)
+            #self.buffer_sobra.extend(data)
             self.current_data_visual = np.roll(self.current_data_visual, -3, axis=0)
             self.current_data_visual[-3:, :] = data
         else:
@@ -567,6 +567,11 @@ class JanelaTrial(QMainWindow):
         self.centralwidget = QWidget(self); self.setCentralWidget(self.centralwidget)
         self.main_layout = QHBoxLayout(self.centralwidget)
         self.panel_left = QFrame(); self.panel_left.setFixedWidth(400); self.layout_left = QVBoxLayout(self.panel_left)
+        self.aquisicao = aquisicao
+        self.output_binario = False
+        self.main_layout.addWidget(self.panel_left)
+        self.salvar_dados = True
+        self.dados_guardados = []; self.marcacoes = []
         #self.label = QLabel("Trial em andamento...",self)
         #self.label.setGeometry(QtCore.QRect(1,8,100,23))
         #font = self.label.font()
@@ -641,7 +646,11 @@ class JanelaTrial(QMainWindow):
         self.abrir_arquivo_btn.setEnabled(False) # Desabilitado até que o checkbox seja marcado
         layout_acoes.addWidget(self.dados_arquivo_checkbox)
         layout_acoes.addWidget(self.abrir_arquivo_btn)
-        
+
+        self.salvar_dados_checkbox= QCheckBox("Salvar Dados (CSV)"); self.salvar_dados_checkbox.setChecked(True)
+        self.salvar_dados_checkbox.stateChanged.connect(lambda state: setattr(self, 'salvar_dados', state == QtCore.Qt.Checked))
+        layout_acoes.addWidget(self.salvar_dados_checkbox)
+
         self.btn_iniciar_ia = QPushButton("🧠 PASSO 2: Iniciar Sessão Live IA (Hands)")
         self.btn_iniciar_ia.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; padding: 12px; font-size: 13px;")
         self.btn_iniciar_ia.clicked.connect(self.iniciar_sessao_ml)
@@ -683,8 +692,8 @@ class JanelaTrial(QMainWindow):
                 self.model.compile(optimizer=Adam(1e-4), loss='binary_crossentropy', metrics=['accuracy'])
                 self.lbl_status_modelo.setText("Status: Modelo carregado. Shape: " + str(self.model.input_shape)); self.lbl_status_modelo.setStyleSheet("color: #00e676;")
 
-                #self.aquisicao = Aquisicao(len_data=self.model.input_shape[1], num_canais=self.model.input_shape[2])
-                #self.output_binario = len(self.model.outputs) == 1
+                #self.aquisicao = Aquisicao(len_data=self.model.input_shape[1], num_canais=self.model.input_shape[2]) # por enquanto está usando o aquisicao do main
+                self.output_binario = len(self.model.outputs) == 1
                 #if self.output_binario:
                 #    self.botao_incluir_rest.setEnabled(True) # se for binário, pode incluir intervalo como terceira classe
                 #    self.limiar.setEnabled(True) # se for binário, faz sentido usar um limiar de acerto
@@ -718,9 +727,9 @@ class JanelaTrial(QMainWindow):
         if self.dados_offline:
             class AquisicaoOffline(self):
                 def __init__(self):
-                    self.currend_data = []
+                    self.current_data = []
             self.aquisicao = AquisicaoOffline()
-            self.timer_atualizacao_offline = QTCore.QTimer()
+            self.timer_atualizacao_offline = QtCore.QTimer()
         # Cria o Gabarito com base no SpinBox e embaralha para a sessão da IA
         rep_por_classe = self.spin_trials_ia.value()
         self.gabarito_sessao = [0]*rep_por_classe + [1]*rep_por_classe + [2]*rep_por_classe
@@ -750,14 +759,14 @@ class JanelaTrial(QMainWindow):
         target_time = self.spin_shape_time.value()
         target_ch = self.spin_shape_ch.value()
         
-        if len(self.buffer_sobra) >= target_time:
-            if self.indice_atual >= self.total_tentativas: 
+        if len(self.aquisicao.current_data) >= target_time: # Se houver dados suficientes no buffer, processa
+            if self.indice_atual >= self.total_tentativas: # Se já completou todas as tentativas, finaliza a sessão
                 self.finalizar_sessao()
                 return
             
-            dados_para_ia = self.aquisicao.current_data[(self.len_data - self.modelo.input_shape[1]):self.len_data, :target_ch]
+            dados_para_ia = self.aquisicao.current_data[(self.aquisicao.len_data - self.model.input_shape[1]):self.aquisicao.len_data, :target_ch]
             #raw_epoch = np.array(self.buffer_sobra[:target_time])
-            self.buffer_sobra = self.buffer_sobra[target_time:] 
+            #self.buffer_sobra = self.buffer_sobra[target_time:] 
             #dados_para_ia = raw_epoch[:, :target_ch]
             self.classificar_e_treinar(dados_para_ia)
 
@@ -765,12 +774,15 @@ class JanelaTrial(QMainWindow):
         chunk_size = 3
         if self.ponteiro_arquivo + chunk_size < len(self.dados_arquivo):
                 self.aquisicao.current_data = self.dados_arquivo[self.ponteiro_arquivo : self.ponteiro_arquivo + chunk_size]
-                self.ponteiro_arquivo += chunk_size; self.buffer_sobra.extend(self.aquisicao.current_data)
+                self.ponteiro_arquivo += chunk_size; #self.buffer_sobra.extend(self.aquisicao.current_data)
 
 
     def classificar_e_treinar(self, dados):
+        if self.salvar_dados:
+            len_dados = len(self.dados_guardados)
         lbl_real = self.gabarito_sessao[self.indice_atual]
-        pred = 2; prob = [0.0, 0.0, 1.0]
+        if self.output_binario:
+            pred = 2; prob = [0.0, 0.0, 1.0]
 
         if not self.model:
             QMessageBox.warning(self, 'Aviso', 'Carregue um modelo primeiro.')
@@ -781,7 +793,10 @@ class JanelaTrial(QMainWindow):
             input_data = np.expand_dims(dados_norm, axis=0).astype(np.float32)
             try:
                 res = self.model.predict(input_data, verbose=0)[0]
-                pred = np.argmax(res); prob = res
+                if not self.output_binario:
+                    pred = np.argmax(res); prob = res
+                else:
+                    pred = 0 if res[0] < 0.5 else 1; prob = [res[0], 1-res[0], 0.0]
             except Exception as e: print(f"Erro na predição: {e}")
 
         # Salva o Log no Dicionário
@@ -810,7 +825,7 @@ class JanelaTrial(QMainWindow):
             else: self.unity.send("HAND_REST")
 
         # FINE TUNING (O Ouro da Pesquisa)
-        if self.modo_dados != "TESTE" and self.model and self.indice_atual < self.qtd_tl:
+        '''if self.modo_dados != "TESTE" and self.model and self.indice_atual < self.qtd_tl:
             if acertou: 
                 self.acertos_fase1 += 1
                 d_norm = (dados - dados.min()) / (dados.max() - dados.min() + 1e-8)
@@ -818,9 +833,18 @@ class JanelaTrial(QMainWindow):
                 target = np.array([lbl_real]).astype(np.float32)
                 for _ in range(EPOCHS_TREINO): self.model.train_on_batch(inp, target)
         elif self.modo_dados != "TESTE" and acertou:
-            self.acertos_fase2 += 1
+            self.acertos_fase2 += 1'''
 
         self.indice_atual += 1
+
+        if self.salvar_dados:
+            if len(self.dados_guardados) == 0: # se for o primeiro chunk, salva tudo o que tiver no buffer, senão salva só o que for novo
+                new_chunk = self.aquisicao.len_data
+            else:
+                new_chunk = self.aquisicao.new_len
+            self.marcacoes.append([len(self.dados_guardados), len(self.dados_guardados) + new_chunk, pred, lbl_real])
+            self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data - new_chunk:, :].tolist()
+            
 
     def finalizar_sessao(self):
         self.timer_sessao.stop()
@@ -836,13 +860,21 @@ class JanelaTrial(QMainWindow):
                 mensagem_final += f"\n\nOs resultados foram salvos na pasta raiz em:\n{nome_csv}"
             except Exception as e: mensagem_final += f"\n\nATENÇÃO: Falha ao salvar arquivo CSV. {e}"
 
-        if self.modo_dados != "TESTE":
+        '''if self.modo_dados != "TESTE":
             total_teste = self.total_tentativas - self.qtd_tl
             acc_treino = (self.acertos_fase1 / self.qtd_tl) * 100 if self.qtd_tl > 0 else 0
             acc_teste = (self.acertos_fase2 / total_teste) * 100 if total_teste > 0 else 0
-            mensagem_final += f"\n\nEstatísticas da IA:\nAcertos no Treino (TL): {acc_treino:.1f}%\nAcertos no Teste Real: {acc_teste:.1f}%"
+            mensagem_final += f"\n\nEstatísticas da IA:\nAcertos no Treino (TL): {acc_treino:.1f}%\nAcertos no Teste Real: {acc_teste:.1f}%"'''
 
         QMessageBox.information(self, "Fim de Sessão", mensagem_final)
+
+        if self.salvar_dados:
+            with open("dados_guardados.txt", "w") as f:
+                for item in self.dados_guardados:
+                    f.write("%s\n" % item)
+            with open("marcacoes.txt", "w") as f:
+                for item in self.marcacoes:
+                    f.write("%s\n" % item)
 
     def abrir_gravacao_paradigma(self):
         win_config = JanelaConfiguracaoParadigma(self.unity is not None)

@@ -1,5 +1,5 @@
-﻿from pylsl import StreamInlet, resolve_stream, resolve_byprop
-import numpy as np
+﻿from dependencias import *
+from pylsl import StreamInlet, resolve_stream, resolve_byprop
 from scipy.fft import fft, rfft
 
 class Aquisicao:
@@ -72,6 +72,48 @@ class Aquisicao:
         freqs = np.linspace(0, self.fs / 2, mag.shape[0], endpoint=True)
         return freqs, self.fft_data
         
+class AquisicaoOffline(Aquisicao):
+    def __init__(self, len_data, num_canais=16, xlim_FFT=200,smooth_factor=0, data_source=None, len_chunk=3):
+        super().__init__(len_data, num_canais, xlim_FFT,smooth_factor)
+        self.conectado = True  # Simula que está conectado
+        self.data_source = data_source  # Fonte de dados offline
+        self.current_index = 0  # Índice para rastrear a posição atual nos dados offline
+        self.len_chunk = len_chunk  # Tamanho do chunk de dados a ser adquirido a cada chamada
+
+    def adquirir(self):
+        # Simula a aquisição de dados offline
+        chunk = self.data_source[self.current_index:self.current_index + self.len_chunk]
+        self.current_index += self.len_chunk
+        self.current_data = np.roll(self.current_data, -self.len_chunk, axis=0)
+        self.current_data[-self.len_chunk:, :] = chunk
+
+        for i in range(self.num_canais):
+            channel_data = self.current_data[:, i]
+            segment_FFT = channel_data[-self.xlim_FFT*2:]
+            fft_data = rfft(segment_FFT)
+            fft_mag = fft_data[:len(segment_FFT)//2]
+            fft_mag = 2.0/len(segment_FFT) * np.abs(fft_mag)
+            f = self.fft_smooth_factor
+            self.fft_buffer_history[i] = (self.fft_buffer_history[i]*f) + (fft_mag*(1-f))
+            self.fft_data[:, i] = fft_mag[:self.xlim_FFT]
+
+        return chunk
+    
+    def reset(self):
+        self.current_index = 0
+        self.current_data = np.zeros((self.len_data, self.num_canais))
+        self.fft_buffer_history = np.zeros((self.num_canais, self.xlim_FFT))
+        self.fft_data = np.zeros((self.xlim_FFT, self.num_canais))
+
+    def data_from_file(self, file_path=None):
+        # Carrega os dados offline de um arquivo
+        
+        if file_path:
+            self.data_source = np.load(file_path)
+        else:
+            # Se nenhum caminho de arquivo for fornecido, abra um diálogo para selecionar o arquivo
+            pass
+        self.reset()  # Reseta o estado para começar do início dos dados carregados
 
 if __name__ == "__main__":
     aq = Aquisicao(len_data=721)
@@ -81,6 +123,7 @@ if __name__ == "__main__":
         amostra = aq.adquirir()
         if amostra is not None:
             print(aq.fft_data)  # Aqui você pode usar os dados FFT para visualização ou processamento adicional
+
 
 
 

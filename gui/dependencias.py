@@ -29,11 +29,12 @@ import zmq
 #from random import uniform
 import random
 import socket
-import datetime
+from datetime import datetime
 import pandas as pd
 
 PORTA_UNITY = 5555
 PORTA_UDP_UNITY = 12346
+EPOCHS_TREINO = 1
 
 def aplicar_estilo_escuro(janela):
         qss = """
