@@ -764,7 +764,7 @@ class JanelaTrial(QMainWindow):
                 self.finalizar_sessao()
                 return
             
-            dados_para_ia = self.aquisicao.current_data[(self.aquisicao.len_data - self.model.input_shape[1]):self.aquisicao.len_data, :target_ch]
+            dados_para_ia = self.aquisicao.pegar_canais_especificos(['C3', 'C4', 'Fp1', 'Fp2', 'F7', 'F3', 'F4', 'F8','T7', 'T8', 'P7', 'P3', 'P4', 'P8', 'O1', 'O2'])[(self.aquisicao.len_data - self.model.input_shape[1]):self.aquisicao.len_data, :target_ch]
             #raw_epoch = np.array(self.buffer_sobra[:target_time])
             #self.buffer_sobra = self.buffer_sobra[target_time:] 
             #dados_para_ia = raw_epoch[:, :target_ch]

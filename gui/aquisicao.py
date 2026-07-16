@@ -9,12 +9,14 @@ class Aquisicao:
         self.conectado = False
         self.current_data = np.zeros((self.len_data, self.num_canais))
         self.new_len = 0
+        self.inlet = None
 
         self.xlim_FFT = xlim_FFT # nota: xlim_FFT é o número de pontos para o plot do FFT, mas deve ser o mesmo número que o número de pontos usados para calcular o FFT?
         self.fft_len = self.len_data * 2
         self.fft_smooth_factor = smooth_factor
         self.fft_buffer_history = np.zeros((self.num_canais, self.xlim_FFT))
         self.fft_data = np.zeros((self.xlim_FFT, self.num_canais))
+        self.channels = self.get_channel_labels()
 
     def conectar(self):
         print("Aguardando stream EEG...")
@@ -22,6 +24,7 @@ class Aquisicao:
         if self.streams:
            self.inlet = StreamInlet(self.streams[0])
            self.conectado = True
+           self.channels = self.get_channel_labels()
         else:
             print("Nenhum stream EEG encontrado.")
             self.conectado = False
@@ -71,6 +74,26 @@ class Aquisicao:
         self.fft_data[:mag.shape[0], :] = mag
         freqs = np.linspace(0, self.fs / 2, mag.shape[0], endpoint=True)
         return freqs, self.fft_data
+    
+    def pegar_canais_especificos(self, nomes_canais):
+        indices = []
+        try:
+            for i in nomes_canais:
+                indices.append(self.channels[i])
+            return self.current_data[:, indices]
+        except ValueError:
+            return self.current_data
+    
+    def get_channel_labels(self):
+        if self.conectado and self.inlet is not None:
+            channels_node = self.inlet.info().desc().child('channels')
+            channel_labels = dict()
+            for i in range(self.inlet.info().channel_count()):
+                channel_labels[channels_node.child("channel").child_value('label')] = i
+                channels_node = channels_node.next_sibling()
+            return channel_labels
+        else:
+            return None
         
 class AquisicaoOffline(Aquisicao):
     def __init__(self, len_data, num_canais=16, xlim_FFT=200,smooth_factor=0, data_source=None, len_chunk=3):
@@ -116,10 +139,17 @@ class AquisicaoOffline(Aquisicao):
         self.reset()  # Reseta o estado para começar do início dos dados carregados
 
 if __name__ == "__main__":
+    canais = ['C3', 'C4', 'Fp1', 'Fp2', 'F7', 'F3', 'F4', 'F8','T7', 'T8', 'P7', 'P3', 'P4', 'P8', 'O1', 'O2']
     aq = Aquisicao(len_data=721)
     aq.conectar()
     print(aq.fft_data)
-    while True:
+    channels_node = aq.inlet.info().desc().child('channels')
+    channel_labels = []
+    for i in range(16):
+        channel_labels.append(channels_node.child("channel").child_value('label'))
+        channel_node = channels_node.next_sibling()
+    print('canal', channel_labels)
+    while False:
         amostra = aq.adquirir()
         if amostra is not None:
             print(aq.fft_data)  # Aqui você pode usar os dados FFT para visualização ou processamento adicional
