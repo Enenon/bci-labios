@@ -95,6 +95,15 @@ class Aquisicao:
         else:
             return None
         
+    def channel_labels_by_file(self, file_path):
+        channel_labels = dict()
+        with open(file_path, 'r') as f:
+            for line in f.read().splitlines():
+                index, label = line.split(' - ')
+                channel_labels[label] = int(index)
+        self.channels = channel_labels
+        return channel_labels
+        
 class AquisicaoOffline(Aquisicao):
     def __init__(self, len_data, num_canais=16, xlim_FFT=200,smooth_factor=0, data_source=None, len_chunk=3):
         super().__init__(len_data, num_canais, xlim_FFT,smooth_factor)
@@ -142,13 +151,15 @@ if __name__ == "__main__":
     canais = ['C3', 'C4', 'Fp1', 'Fp2', 'F7', 'F3', 'F4', 'F8','T7', 'T8', 'P7', 'P3', 'P4', 'P8', 'O1', 'O2']
     aq = Aquisicao(len_data=721)
     aq.conectar()
-    print(aq.fft_data)
+    '''print(aq.fft_data)
     channels_node = aq.inlet.info().desc().child('channels')
     channel_labels = []
     for i in range(16):
         channel_labels.append(channels_node.child("channel").child_value('label'))
         channel_node = channels_node.next_sibling()
-    print('canal', channel_labels)
+    print('canal', channel_labels)'''
+    aq.channel_labels_by_file('gui\\channel_labels.txt')
+    print(aq.channels['PT11'])
     while False:
         amostra = aq.adquirir()
         if amostra is not None:
