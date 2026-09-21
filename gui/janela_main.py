@@ -1,10 +1,8 @@
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' 
-
-from dependencias import *
+﻿from dependencias import *
 from aquisicao import Aquisicao
 
 
-
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' 
 
 
 # =============================================================================
