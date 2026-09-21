@@ -1,11 +1,23 @@
+import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' 
 
 from dependencias import *
 from aquisicao import Aquisicao
+from unitysender import UnitySender
+from PyQt5.QtCore import QThread, pyqtSignal, QTimer, Qt, QElapsedTimer
+from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QPolygonF, QFont
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QListWidget, QListWidgetItem, 
+                             QPushButton, QLabel, QHBoxLayout, QMessageBox, 
+                             QGroupBox, QFormLayout, QComboBox, QDoubleSpinBox, 
+                             QSpinBox, QLineEdit, QCheckBox, QRadioButton, 
+                             QFileDialog, QWidget, QMainWindow, QFrame, QTabWidget, QApplication)
+from time import sleep
+import pandas as pd
+import random
+from datetime import datetime
+import numpy as np
 
-
-
-
+from scipy.signal import resample
 
 # =============================================================================
 # TEMA VISUAL UNIFICADO
@@ -190,13 +202,13 @@ class CubeFeedbackWidget(QWidget):
         
         painter.drawRect(int(self.current_x - 15), h//2 - 15, 30, 30)
 
-#=============================================================================
-# WIDGET 3: CONSOLE DE TELEMETRIA (Exclusivo do Pesquisador)
+# =============================================================================
+# WIDGET 3: CONSOLE DE TELEMETRIA 
 # =============================================================================
 class TelemetryWidget(QWidget):
     def __init__(self):
         super().__init__()
-        self.setMinimumSize(350, 180) # Aumentei o tamanho para caber o histórico
+        self.setMinimumSize(350, 100)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -212,11 +224,6 @@ class TelemetryWidget(QWidget):
         for lbl in [self.lbl_explicacao, self.lbl_log, self.lbl_wma, self.lbl_diagnostico]:
             lbl.setStyleSheet(lbl.styleSheet() + f"font-family: Consolas, monospace; background-color: {Tema.PAINEL}; color: {Tema.TEXTO}; padding: 4px; border-radius: 4px;")
             layout.addWidget(lbl)
-            
-        # === NOVO: CAIXA DE HISTÓRICO DOS TRIALS ===
-        self.lista_trials = QListWidget()
-        self.lista_trials.setStyleSheet(f"background-color: {Tema.BG}; border: 1px solid {Tema.BORDA}; color: {Tema.TEXTO}; font-family: Consolas; font-size: 11px;")
-        layout.addWidget(self.lista_trials)
 
     def update_telemetry(self, log_lista, wma_prob, nomes_classes, epocas_puladas=0):
         log_str = " ➔ ".join(log_lista) if log_lista else "[ Vazio ]"
@@ -230,14 +237,10 @@ class TelemetryWidget(QWidget):
 
         cor_diag = Tema.ERRO if epocas_puladas > 0 else Tema.OK
         self.lbl_diagnostico.setText(f"Épocas puladas (IA lenta): {epocas_puladas}")
-        self.lbl_diagnostico.setStyleSheet(f"font-family: Consolas, monospace; background-color: {Tema.PAINEL}; color: {cor_diag}; padding: 4px; border-radius: 4px; font-weight: bold;")
+        self.lbl_diagnostico.setStyleSheet(
+            f"font-family: Consolas, monospace; background-color: {Tema.PAINEL}; color: {cor_diag}; padding: 4px; border-radius: 4px; font-weight: bold;"
+        )
 
-    def log_trial(self, texto, cor):
-        """ Adiciona uma linha de relatório estatístico do Trial inteiro """
-        item = QListWidgetItem(texto)
-        item.setForeground(QColor(cor))
-        self.lista_trials.addItem(item)
-        self.lista_trials.scrollToBottom()
 # =============================================================================
 # WORKER IA 
 # =============================================================================
@@ -254,7 +257,6 @@ class WorkerIA(QThread):
         self.dados_predicao = None
         self.dados_treino = None
         self.labels_treino = None
-        self.tensor_treino = [[], []]
 
         self.epocas_puladas = 0
         self.ultimo_tempo_predict_ms = 0.0
@@ -263,11 +265,8 @@ class WorkerIA(QThread):
     def run(self):
         while self.rodando:
             if self.modo_treino and self.dados_treino is not None:
-                #try: self.model.train_on_batch(self.dados_treino, self.labels_treino)
-                #except Exception as e: print(f"❌ Erro no treino: {e}")
-                self.tensor_treino[0].append(self.dados_treino)
-                self.tensor_treino[1].append(self.labels_treino)
-
+                try: self.model.train_on_batch(self.dados_treino, self.labels_treino)
+                except Exception as e: print(f"❌ Erro no treino: {e}")
                 self.modo_treino = False
                 self.dados_treino = None
                 self.sinal_treino_concluido.emit()
@@ -305,13 +304,6 @@ class WorkerIA(QThread):
 
     def parar(self):
         self.rodando = False
-
-    def treinar_com_dados(self):
-        for i in range(len(self.tensor_treino[0])):
-            try:
-                self.model.train_on_batch(self.tensor_treino[0][i], self.tensor_treino[1][i])
-            except Exception as e:
-                print(f"❌ Erro no treino: {e}")
 
 class DialogoSelecaoCanaisIA(QDialog):
     def __init__(self, canais_disponiveis, canais_selecionados_atuais):
@@ -1156,14 +1148,8 @@ class JanelaInicial(QMainWindow):
         return [le.text().strip() if le.text().strip() else f"Classe {i}" for i, le in enumerate(self.lista_lineedits)]
 
     def limpar_historico_trial(self):
-        # Esta função é chamada toda vez que a seta aparece na tela (Início do Trial)
         self.trial_predicts_log = []
-        
-        # === GRAVADORES DA MÉTRICA DE DESEMPENHO ===
-        self.gravador_trial_preds = []
-        self.gravador_trial_probs = []
-        
-        self.telemetry.update_telemetry([], [], [], 0)
+        self.telemetry.update_telemetry([], [], [])
 
     def abrir_gravacao_paradigma(self):
         nomes = self.obter_nomes_classes()
@@ -1251,7 +1237,7 @@ class JanelaInicial(QMainWindow):
 
         self.historico_probs.append(prob)
         if len(self.historico_probs) > 4: self.historico_probs.pop(0)
-# CASO MODIFICAR PESOS MUDA AQUI
+
         pesos_base = [0.05, 0.15, 0.30, 0.50]
         pesos_atuais = pesos_base[-len(self.historico_probs):]
         soma_pesos = sum(pesos_atuais)
@@ -1265,12 +1251,6 @@ class JanelaInicial(QMainWindow):
         max_idx = wma_prob.index(max_val)
         nome_predito = nomes[max_idx].lower() if max_idx < len(nomes) else "indefinido"
         
-        # === O GRAVADOR ESPIONA A PREDIÇÃO ATUAL ===
-        if hasattr(self, 'gravador_trial_preds'):
-            self.gravador_trial_preds.append(max_idx)
-            self.gravador_trial_probs.append(max_val)
-        # ===========================================
-
         comando_movimento = "CENTRO" 
         if max_val >= 0.60:
             if "esquerda" in nome_predito: comando_movimento = "ESQUERDA"
@@ -1279,7 +1259,6 @@ class JanelaInicial(QMainWindow):
         epocas_puladas = self.worker_ia.epocas_puladas if self.worker_ia else 0
         self.telemetry.update_telemetry(self.trial_predicts_log, wma_prob, nomes, epocas_puladas)
 
-        # O CUBO CONTINUA SE MOVENDO EM TEMPO REAL
         if self.paradigma_win and self.paradigma_win.isVisible() and self.paradigma_win.widget_feedback:
             if isinstance(self.paradigma_win.widget_feedback, CubeFeedbackWidget):
                 self.paradigma_win.widget_feedback.set_decision(comando_movimento, confianca=max_val)
@@ -1304,48 +1283,12 @@ class JanelaInicial(QMainWindow):
             elif "direita" in nome_predito: self.unity.send("HAND_RIGHT")
             else: self.unity.send("HAND_REST")
 
-# === O CÁLCULO DA MÉTRICA NO FINAL DO TRIAL ===
-        if is_training:
-            if hasattr(self, 'gravador_trial_preds') and len(self.gravador_trial_preds) > 0:
-                # 1. Matemática do Desempenho
-                acertos = self.gravador_trial_preds.count(label_real)
-                total_janelas = len(self.gravador_trial_preds)
-                taxa_acerto = (acertos / total_janelas) * 100.0
-                confianca_media = (sum(self.gravador_trial_probs) / len(self.gravador_trial_probs)) * 100.0
-                
-                nome_alvo = nomes[label_real].upper()
-                
-                # 2. Descobre o que a IA REALMENTE previu na maioria do tempo
-                # Conta qual índice apareceu mais vezes no gravador
-                classe_mais_votada_idx = max(set(self.gravador_trial_preds), key=self.gravador_trial_preds.count)
-                nome_mais_votado = nomes[classe_mais_votada_idx].upper()
-                
-                # 3. Definição do Limiar Científico com Diagnóstico de Erro
-                if taxa_acerto >= 50.0:
-                    status = "✅ ACERTO"
-                    cor = Tema.OK
-                else:
-                    # Se errou, mostra o que ela "achou" que era
-                    status = f"❌ ERRO (Previu: {nome_mais_votado})"
-                    cor = Tema.ERRO
-                    
-                # 4. Cria a mensagem final
-                num_trial = len(self.marcacoes) + 1
-                msg = f"Trial {num_trial} [Alvo: {nome_alvo}] -> {status} | Dominância: {taxa_acerto:.0f}% | Confiança: {confianca_media:.0f}%"
-                
-                # Imprime no painel da GUI
-                self.telemetry.log_trial(msg, cor)
-                
-                # IMPRIME NO TERMINAL (TELA PRETA) COMO SOLICITADO
-                print(f"[RESULTADO TRIAL] {msg}")
-
-            # Salva os dados na memória
-            if self.salvar_dados:
-                new_chunk = self.aquisicao.len_data if len(self.dados_guardados) == 0 else self.aquisicao.new_len
-                self.marcacoes.append([len(self.dados_guardados), len(self.dados_guardados) + new_chunk, max_idx, label_real])
-                self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data - new_chunk:, :].tolist()
-            
+        if is_training and self.salvar_dados:
+            new_chunk = self.aquisicao.len_data if len(self.dados_guardados) == 0 else self.aquisicao.new_len
+            self.marcacoes.append([len(self.dados_guardados), len(self.dados_guardados) + new_chunk, max_idx, label_real])
+            self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data - new_chunk:, :].tolist()
             self.historico_probs = []
+
     def iniciar_pausa_tecnica(self):
         self.lbl_fase.setText("A TREINAR MODELO (PAUSA TÉCNICA)...")
         self.lbl_fase.setStyleSheet(estilo_status(Tema.ALERTA))
@@ -1367,7 +1310,6 @@ class JanelaInicial(QMainWindow):
 
     def finalizar_sessao(self):
         if hasattr(self, 'timer_atualizacao_offline'): self.timer_atualizacao_offline.stop()
-        self.worker_ia.treinar_com_dados()
         self.lbl_fase.setText("SESSÃO CONCLUÍDA")
         self.btn_iniciar_ia.setEnabled(True)
         self.btn_iniciar_ia.setText("▶ PASSO 2: INICIAR SESSÃO")

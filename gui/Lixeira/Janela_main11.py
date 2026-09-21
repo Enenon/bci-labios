@@ -1,14 +1,29 @@
+import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' 
 
 from dependencias import *
 from aquisicao import Aquisicao
+from unitysender import UnitySender
+from PyQt5.QtCore import QThread, pyqtSignal, QTimer, Qt, QElapsedTimer
+from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QPolygonF, QFont
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QListWidget, QListWidgetItem, 
+                             QPushButton, QLabel, QHBoxLayout, QMessageBox, 
+                             QGroupBox, QFormLayout, QComboBox, QDoubleSpinBox, 
+                             QSpinBox, QLineEdit, QCheckBox, QRadioButton, 
+                             QFileDialog, QWidget, QMainWindow, QFrame, QTabWidget, QApplication)
+from time import sleep
+import pandas as pd
+import random
+from datetime import datetime
+import numpy as np
 
-
-
-
+# BIBLIOTECA CIENTÍFICA PARA RESAMPLING (Proteção contra Efeito Fast-Forward)
+from scipy.signal import resample
 
 # =============================================================================
-# TEMA VISUAL UNIFICADO
+# TEMA VISUAL UNIFICADO (paleta única, inspirada no OpenBCI GUI)
+# Centraliza todas as cores usadas na interface para manter coesão visual
+# e para que qualquer ajuste de paleta seja feito em um único lugar.
 # =============================================================================
 class Tema:
     BG = "#14181c"
@@ -16,14 +31,17 @@ class Tema:
     BORDA = "#2a323a"
     TEXTO = "#e6e9ec"
     TEXTO_MUTED = "#8b96a1"
-    ESQUERDA = "#00bcd4"   
-    DIREITA = "#ff4081"    
-    REPOUSO = "#ffc93c"    
+    ESQUERDA = "#00bcd4"   # ciano — usado em todo lugar p/ classe "esquerda"
+    DIREITA = "#ff4081"    # rosa/magenta — usado em todo lugar p/ classe "direita"
+    REPOUSO = "#ffc93c"    # amarelo — usado em todo lugar p/ classe "repouso"
     OK = "#00e676"
     ALERTA = "#ff9800"
     ERRO = "#ff5252"
     NEUTRO = "#888888"
 
+# QSS aplicado uma única vez na janela principal para dar aparência
+# consistente de "painéis/cards" (bordas, títulos) em todos os GroupBox/Tabs,
+# substituindo estilos inline repetidos espalhados pelo código.
 QSS_PAINEIS = f"""
 QGroupBox {{
     background-color: {Tema.PAINEL};
@@ -59,10 +77,12 @@ QTabBar::tab:selected {{
 """
 
 def estilo_status(cor):
+    """Estilo único e reutilizável para labels de status (LSL/Unity/IA),
+    evitando criar objetos QPalette repetidos para a mesma finalidade."""
     return f"color: {cor}; font-weight: bold;"
 
 # =============================================================================
-# WIDGET 1: VELOCÍMETRO
+# WIDGET 1: VELOCÍMETRO (Probabilidade Instantânea)
 # =============================================================================
 class GaugeWidget(QWidget):
     def __init__(self):
@@ -72,6 +92,10 @@ class GaugeWidget(QWidget):
         self.target_angle = 0.0
         self.probs = [0.0, 0.0, 0.0]  
         
+        # Motor de desenho a ~30ms de intervalo nominal. A velocidade da
+        # animação NÃO depende mais desse valor nominal: usamos QElapsedTimer
+        # para medir o dt real entre chamadas, então a suavização fica correta
+        # mesmo se o timer atrasar (jitter do SO/Qt, carga na thread da GUI).
         self._relogio = QElapsedTimer()
         self._relogio.start()
         self.anim_timer = QtCore.QTimer(self)
@@ -88,6 +112,8 @@ class GaugeWidget(QWidget):
 
     def update_animation(self):
         dt_ms = self._relogio.restart()
+        # Fator de suavização calibrado para ~30ms; escalado pelo dt real
+        # para que a velocidade angular seja igual independente de jitter.
         fator = 1.0 - (0.95 ** (dt_ms / 30.0)) if dt_ms > 0 else 0.05
         diff = self.target_angle - self.current_angle
         if abs(diff) > 0.1:
@@ -123,7 +149,7 @@ class GaugeWidget(QWidget):
         painter.restore()
 
 # =============================================================================
-# WIDGET 2: CUBO ACUMULATIVO 1D
+# WIDGET 2: CUBO ACUMULATIVO 1D (O Cabo de Guerra)
 # =============================================================================
 class CubeFeedbackWidget(QWidget):
     def __init__(self):
@@ -132,13 +158,18 @@ class CubeFeedbackWidget(QWidget):
         self.center_x = 150
         self.current_x = 150
         self.target_direction = 0 
-        self.confianca = 1.0  
+        self.confianca = 1.0  # 0..1, escala a velocidade proporcionalmente
 
+        # Base de velocidade/decaimento calibrada para um passo de 30ms;
+        # o dt real é medido via QElapsedTimer para que o movimento não
+        # dependa da precisão do QTimer (evita variação de velocidade
+        # perceptível quando a thread da GUI atrasa o disparo do timer).
         self._speed_base_px_ms = 5.0 / 30.0
         self._decay_base_px_ms = 1.5 / 30.0
         self._relogio = QElapsedTimer()
         self._relogio.start()
 
+        # O Motor de Desenho: Desliza o cubo sem travar
         self.anim_timer = QtCore.QTimer(self)
         self.anim_timer.timeout.connect(self.update_physics)
         self.anim_timer.start(30)
@@ -149,6 +180,9 @@ class CubeFeedbackWidget(QWidget):
         self.confianca = 1.0
 
     def set_decision(self, decision, confianca=1.0):
+        """confianca (0..1): magnitude da predição (ex: WMA), usada para
+        que o cubo se mova mais rápido quanto mais confiante a IA estiver,
+        em vez de sempre à mesma velocidade fixa (informação antes perdida)."""
         self.confianca = max(0.0, min(1.0, confianca))
         if decision == "ESQUERDA": self.target_direction = -1
         elif decision == "DIREITA": self.target_direction = 1
@@ -156,7 +190,7 @@ class CubeFeedbackWidget(QWidget):
 
     def update_physics(self):
         dt_ms = self._relogio.restart()
-        dt_ms = min(dt_ms, 100)  
+        dt_ms = min(dt_ms, 100)  # evita "saltos" grandes após pausas longas (ex: dialogs)
 
         speed = self._speed_base_px_ms * dt_ms * (0.4 + 0.6 * self.confianca)
         decay = self._decay_base_px_ms * dt_ms
@@ -190,13 +224,13 @@ class CubeFeedbackWidget(QWidget):
         
         painter.drawRect(int(self.current_x - 15), h//2 - 15, 30, 30)
 
-#=============================================================================
+# =============================================================================
 # WIDGET 3: CONSOLE DE TELEMETRIA (Exclusivo do Pesquisador)
 # =============================================================================
 class TelemetryWidget(QWidget):
     def __init__(self):
         super().__init__()
-        self.setMinimumSize(350, 180) # Aumentei o tamanho para caber o histórico
+        self.setMinimumSize(350, 100)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -207,16 +241,15 @@ class TelemetryWidget(QWidget):
         self.lbl_log.setWordWrap(True)
 
         self.lbl_wma = QLabel("Média Ponderada: --")
+
+        # Diagnóstico de tempo real: quantas épocas foram sobrescritas antes
+        # de serem processadas pela IA (sinal de que o modelo está mais lento
+        # que a cadência de 250ms da janela deslizante).
         self.lbl_diagnostico = QLabel("Épocas puladas (IA lenta): 0")
 
         for lbl in [self.lbl_explicacao, self.lbl_log, self.lbl_wma, self.lbl_diagnostico]:
             lbl.setStyleSheet(lbl.styleSheet() + f"font-family: Consolas, monospace; background-color: {Tema.PAINEL}; color: {Tema.TEXTO}; padding: 4px; border-radius: 4px;")
             layout.addWidget(lbl)
-            
-        # === NOVO: CAIXA DE HISTÓRICO DOS TRIALS ===
-        self.lista_trials = QListWidget()
-        self.lista_trials.setStyleSheet(f"background-color: {Tema.BG}; border: 1px solid {Tema.BORDA}; color: {Tema.TEXTO}; font-family: Consolas; font-size: 11px;")
-        layout.addWidget(self.lista_trials)
 
     def update_telemetry(self, log_lista, wma_prob, nomes_classes, epocas_puladas=0):
         log_str = " ➔ ".join(log_lista) if log_lista else "[ Vazio ]"
@@ -230,14 +263,10 @@ class TelemetryWidget(QWidget):
 
         cor_diag = Tema.ERRO if epocas_puladas > 0 else Tema.OK
         self.lbl_diagnostico.setText(f"Épocas puladas (IA lenta): {epocas_puladas}")
-        self.lbl_diagnostico.setStyleSheet(f"font-family: Consolas, monospace; background-color: {Tema.PAINEL}; color: {cor_diag}; padding: 4px; border-radius: 4px; font-weight: bold;")
+        self.lbl_diagnostico.setStyleSheet(
+            f"font-family: Consolas, monospace; background-color: {Tema.PAINEL}; color: {cor_diag}; padding: 4px; border-radius: 4px; font-weight: bold;"
+        )
 
-    def log_trial(self, texto, cor):
-        """ Adiciona uma linha de relatório estatístico do Trial inteiro """
-        item = QListWidgetItem(texto)
-        item.setForeground(QColor(cor))
-        self.lista_trials.addItem(item)
-        self.lista_trials.scrollToBottom()
 # =============================================================================
 # WORKER IA 
 # =============================================================================
@@ -254,8 +283,11 @@ class WorkerIA(QThread):
         self.dados_predicao = None
         self.dados_treino = None
         self.labels_treino = None
-        self.tensor_treino = [[], []]
 
+        # Diagnóstico de tempo real (ver correção do bug de época perdida):
+        # conta quantas épocas foram sobrescritas por uma nova antes de serem
+        # processadas (indica que o predict() está mais lento que 250ms) e
+        # guarda a duração da última inferência para calibração/monitoramento.
         self.epocas_puladas = 0
         self.ultimo_tempo_predict_ms = 0.0
         self._relogio_predict = QElapsedTimer()
@@ -263,16 +295,20 @@ class WorkerIA(QThread):
     def run(self):
         while self.rodando:
             if self.modo_treino and self.dados_treino is not None:
-                #try: self.model.train_on_batch(self.dados_treino, self.labels_treino)
-                #except Exception as e: print(f"❌ Erro no treino: {e}")
-                self.tensor_treino[0].append(self.dados_treino)
-                self.tensor_treino[1].append(self.labels_treino)
-
+                try: self.model.train_on_batch(self.dados_treino, self.labels_treino)
+                except Exception as e: print(f"❌ Erro no treino: {e}")
                 self.modo_treino = False
                 self.dados_treino = None
                 self.sinal_treino_concluido.emit()
             
             elif not self.modo_treino and self.dados_predicao is not None:
+                # CORREÇÃO CRÍTICA: consome (lê e zera) a época ANTES de rodar
+                # o predict(). Antes, o "self.dados_predicao = None" rodava só
+                # depois do predict() e apagava incondicionalmente qualquer
+                # época nova que a GUI tivesse colocado ali enquanto o predict
+                # antigo ainda estava em andamento — descartando silenciosamente
+                # janelas inteiras sempre que a inferência excedesse os 250ms
+                # do timer de janela deslizante.
                 dados, is_training, label_real = self.dados_predicao
                 self.dados_predicao = None
                 try:
@@ -295,6 +331,9 @@ class WorkerIA(QThread):
     def pedir_predicao(self, dados, is_training=False, label_real=None):
         if not self.modo_treino:
             if self.dados_predicao is not None:
+                # Havia uma época pendente que nunca chegou a ser processada
+                # (predict() ainda não tinha começado a consumi-la): conta
+                # como pulada para diagnóstico em tela.
                 self.epocas_puladas += 1
             self.dados_predicao = (dados, is_training, label_real)
 
@@ -305,13 +344,6 @@ class WorkerIA(QThread):
 
     def parar(self):
         self.rodando = False
-
-    def treinar_com_dados(self):
-        for i in range(len(self.tensor_treino[0])):
-            try:
-                self.model.train_on_batch(self.tensor_treino[0][i], self.tensor_treino[1][i])
-            except Exception as e:
-                print(f"❌ Erro no treino: {e}")
 
 class DialogoSelecaoCanaisIA(QDialog):
     def __init__(self, canais_disponiveis, canais_selecionados_atuais):
@@ -362,6 +394,7 @@ class JanelaConfiguracaoParadigma(QDialog):
         lbl_titulo.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(lbl_titulo)
 
+        # O SELETOR DE MODO CEGO / CUBO / VELOCÍMETRO
         group_fb = QGroupBox("Feedback Visual na Tela do Paciente")
         layout_fb = QVBoxLayout()
         self.combo_fb = QComboBox()
@@ -472,7 +505,7 @@ class JanelaConfiguracaoParadigma(QDialog):
             'usar_python': self.chk_python.isChecked(), 'usar_unity': self.chk_unity.isChecked(),
             'nomes_classes': self.nomes_classes, 'num_classes': self.num_classes,
             'gabarito_forçado': gabarito_forçado,
-            'tipo_feedback': self.combo_fb.currentIndex()
+            'tipo_feedback': self.combo_fb.currentIndex() # 0 = Cubo, 1 = Velocímetro, 2 = Cego
         }
         self.accept()
 
@@ -523,6 +556,7 @@ class JanelaExecucaoParadigma(QDialog):
         self.lbl_estimulo.setStyleSheet("font-size: 60px; font-weight: bold; color: #444444;")
         layout.addWidget(self.lbl_estimulo, 1)
 
+        # MONTAGEM DA INTERFACE CEGA OU COM FEEDBACK
         if self.configs['tipo_feedback'] == 0:
             self.widget_feedback = CubeFeedbackWidget()
             layout.addWidget(self.widget_feedback, alignment=QtCore.Qt.AlignHCenter)
@@ -530,13 +564,14 @@ class JanelaExecucaoParadigma(QDialog):
             self.widget_feedback = GaugeWidget()
             layout.addWidget(self.widget_feedback, alignment=QtCore.Qt.AlignHCenter)
         else:
-            self.widget_feedback = None 
+            self.widget_feedback = None # NÃO MOSTRA NADA!
         
         self.timer_logica = QTimer(self)
         self.timer_logica.setSingleShot(True)
         self.timer_logica.timeout.connect(self.proximo_estado)
         self.contagem_inicial = 3
         
+        # O Motor Lógico que recorta o cérebro a cada 250ms
         self.timer_feedback = QTimer(self)
         self.timer_feedback.timeout.connect(self.enviar_janela_deslizante)
 
@@ -569,7 +604,7 @@ class JanelaExecucaoParadigma(QDialog):
         if self.estado_atual == "ACAO":
             lista_atual = self.seq_calibracao if self.fase_atual == "CALIBRACAO" else self.seq_teste
             classe_alvo = lista_atual[self.trial_atual]
-            self.sinal_extrair_dado.emit(classe_alvo, False) 
+            self.sinal_extrair_dado.emit(classe_alvo, False) # is_training = False
 
     def proximo_estado(self):
         if self.estado_atual in ["CONCLUIDO", "PAUSA_TECNICA", "STANDBY"]: return
@@ -594,6 +629,7 @@ class JanelaExecucaoParadigma(QDialog):
         elif self.estado_atual == "AVISO":
             self.estado_atual = "ACAO"
             
+            # Zera o histórico da telemetria para esse novo estímulo
             self.sinal_inicio_acao.emit()
 
             if "esquerda" in nome_lower: icone = "⬅️"; cor = Tema.ESQUERDA; comando_unity = "CUE_LEFT"
@@ -605,12 +641,14 @@ class JanelaExecucaoParadigma(QDialog):
 
             self.desenhar_tela(icone, 180, cor, f"AÇÃO: {nome_classe_alvo}")
             
+            # ATIVA A JANELA DESLIZANTE
             self.timer_feedback.start(250)
             self.timer_logica.start(self.configs['t_acao'])
             
         elif self.estado_atual == "ACAO":
             self.estado_atual = "REPOUSO"
             
+            # DESLIGA A JANELA E TIRA A FOTO FINAL DO CÉREBRO
             self.timer_feedback.stop()
             self.sinal_extrair_dado.emit(classe_alvo, True) 
 
@@ -659,20 +697,22 @@ class JanelaInicial(QMainWindow):
         self.resize(1300, 850)
         self.setWindowTitle('BCI Control Center')
         aplicar_estilo_escuro(self)
+        # Camada de estilo adicional (painéis/abas) para visual coeso entre
+        # todas as seções da interface, sem alterar o tema-base já aplicado.
         self.setStyleSheet(self.styleSheet() + QSS_PAINEIS)
 
         self.unity = None; self.inlet = None; self.model = None; self.worker_ia = None
         self.dados_arquivo = None; self.ponteiro_arquivo = 0
         
-        self.canais_ia_default = ['Fp1','F7','F3','T7','C3','P7','P3','O1','Fp2','F4','F8','C4','T8','P4','P8','O2']
+        self.canais_ia_default = ['C3', 'C4', 'Fp1', 'Fp2', 'F7', 'F3', 'F4', 'F8','T7', 'T8', 'P7', 'P3', 'P4', 'P8', 'O1', 'O2']
         self.canais_ia = self.canais_ia_default.copy()
         self.canais_base = self.canais_ia_default.copy()
         
         self.n_channels = 16 
         self.canais = self.canais_base[:self.n_channels]
         
-        self.x_size = 5000 
-        self.len_data = 5000
+        self.x_size = 1000 
+        self.len_data = 1000
         self.ptr_visual = 0
         
         self.salvar_dados = True
@@ -707,6 +747,11 @@ class JanelaInicial(QMainWindow):
 
         self.carregar_labels_txt(file_manual=False)
 
+        # Otimização: os status (LSL/Unity/IA) antes criavam 3 objetos QPalette
+        # só para extrair uma cor em hexadecimal via .color(...).name(). Isso
+        # foi substituído por constantes de string do Tema (mesmas cores),
+        # usadas diretamente em setStyleSheet — sem alocar QPalette.
+
         self.timer_plot = QtCore.QTimer()
         self.timer_plot.timeout.connect(self.update_loop_continuo)
         self.timer_plot.start(40)
@@ -722,17 +767,10 @@ class JanelaInicial(QMainWindow):
         
         group_conn = QGroupBox("Módulos & IA")
         form_conn = QFormLayout()
-        
-        self.lbl_placa = QLabel("Desconectado"); self.lbl_placa.setStyleSheet(estilo_status(Tema.ERRO))
+        self.lbl_lsl = QLabel("Desconectado"); self.lbl_lsl.setStyleSheet(estilo_status(Tema.ERRO))
         self.lbl_unity = QLabel("Desconectado"); self.lbl_unity.setStyleSheet(estilo_status(Tema.ERRO))
         self.modelo_infos = QLabel("Nenhum"); self.modelo_infos.setStyleSheet(estilo_status(Tema.TEXTO_MUTED))
-        
-        self.combo_protocolo = QComboBox()
-        self.combo_protocolo.addItems(["LSL", "UDP (OpenBCI)", "TCP (Curry)"])
-        self.combo_protocolo.setStyleSheet("font-weight: bold; color: #00bcd4;")
-        
-        form_conn.addRow("Placa:", self.lbl_placa)
-        form_conn.addRow("Protocolo:", self.combo_protocolo)
+        form_conn.addRow("LSL:", self.lbl_lsl)
         form_conn.addRow("Unity:", self.lbl_unity)
         form_conn.addRow("IA:", self.modelo_infos)
         
@@ -743,12 +781,12 @@ class JanelaInicial(QMainWindow):
         layout_config.addWidget(group_conn)
 
         row_botoes = QHBoxLayout()
-
-        self.btn_placa = QPushButton("📡 Conectar Placa"); self.btn_placa.clicked.connect(self.conectar_placa)
+        self.btn_lsl = QPushButton("📡 LSL"); self.btn_lsl.clicked.connect(self.conectar_LSL)
         self.btn_unity = QPushButton("🎮 Unity"); self.btn_unity.clicked.connect(self.conectar_Unity)
         self.btn_modelo = QPushButton("🤖 Modelo H5"); self.btn_modelo.clicked.connect(self.abrir_modelo)
-        row_botoes.addWidget(self.btn_placa); row_botoes.addWidget(self.btn_unity); row_botoes.addWidget(self.btn_modelo)
+        row_botoes.addWidget(self.btn_lsl); row_botoes.addWidget(self.btn_unity); row_botoes.addWidget(self.btn_modelo)
         layout_config.addLayout(row_botoes)
+
         group_classes = QGroupBox("Mapeamento de Classes (Gabarito)")
         layout_classes = QVBoxLayout()
         self.form_classes = QFormLayout()
@@ -763,6 +801,7 @@ class JanelaInicial(QMainWindow):
         group_classes.setLayout(layout_classes)
         layout_config.addWidget(group_classes)
 
+        # CONFIGURAÇÕES AVANÇADAS: Resampling e Referência
         group_shape = QGroupBox("Configuração de Hardware e IA")
         form_shape = QFormLayout()
         
@@ -771,14 +810,9 @@ class JanelaInicial(QMainWindow):
         self.spin_shape_time = QSpinBox(); self.spin_shape_time.setRange(10, 5000); self.spin_shape_time.setValue(721); self.spin_shape_time.setSuffix(" pts (Tamanho IA)")
         
         self.spin_shape_ch = QSpinBox(); self.spin_shape_ch.setRange(1, 128); self.spin_shape_ch.setValue(16); self.spin_shape_ch.setSuffix(" ch (Visual)")
-        self.spin_shape_ch.valueChanged.connect(self.mudar_numero_canais) # ATIVADO NOVAMENTE!
+        self.spin_shape_ch.valueChanged.connect(self.mudar_numero_canais)
         
-        # === AQUI ESTÁ A NOVA CAIXINHA DO TXT ===
-        self.chk_usar_txt = QCheckBox("Forçar mapa local (.txt)")
-        self.chk_usar_txt.setChecked(False) 
-        self.chk_usar_txt.stateChanged.connect(self.toggle_uso_txt)
-        
-        self.btn_load_txt = QPushButton("📂 Carregar outro .txt...")
+        self.btn_load_txt = QPushButton("📂 Arquivo de Montagem (.txt)")
         self.btn_load_txt.clicked.connect(self.carregar_labels_txt)
         
         self.btn_canais_ia = QPushButton("🧠 Canais Específicos para a IA")
@@ -797,8 +831,7 @@ class JanelaInicial(QMainWindow):
         form_shape.addRow("Amostragem IA:", self.spin_fs_modelo)
         form_shape.addRow("Shape Time (IA):", self.spin_shape_time)
         form_shape.addRow("Canais Display:", self.spin_shape_ch)
-        form_shape.addRow("Montagem Real:", self.chk_usar_txt)
-        form_shape.addRow("", self.btn_load_txt)
+        form_shape.addRow("Montagem Real:", self.btn_load_txt)
         form_shape.addRow("Alimentar Modelo:", self.btn_canais_ia)
         form_shape.addRow("Re-referência IA:", self.combo_referencia) 
         
@@ -807,15 +840,14 @@ class JanelaInicial(QMainWindow):
         
         group_fonte = QGroupBox("Fonte de Dados")
         layout_fonte = QVBoxLayout()
-        self.radio_placa = QRadioButton("Placa (Tempo Real)"); self.radio_placa.setChecked(True)
+        self.radio_lsl = QRadioButton("Placa LSL (Tempo Real)"); self.radio_lsl.setChecked(True)
         self.radio_csv = QRadioButton("Playback Offline (Ficheiro CSV)")
         self.radio_sim = QRadioButton("Sintético (Simulação Matemática)")
-        
         self.btn_abrir_csv = QPushButton("📂 Abrir CSV..."); self.btn_abrir_csv.setEnabled(False)
         self.btn_abrir_csv.clicked.connect(self.abrir_arquivo_csv)
         self.radio_csv.toggled.connect(lambda state: self.btn_abrir_csv.setEnabled(state))
 
-        layout_fonte.addWidget(self.radio_placa); layout_fonte.addWidget(self.radio_csv)
+        layout_fonte.addWidget(self.radio_lsl); layout_fonte.addWidget(self.radio_csv)
         layout_fonte.addWidget(self.btn_abrir_csv); layout_fonte.addWidget(self.radio_sim)
         group_fonte.setLayout(layout_fonte)
         layout_config.addWidget(group_fonte)
@@ -838,6 +870,7 @@ class JanelaInicial(QMainWindow):
         self.btn_iniciar_ia.clicked.connect(self.iniciar_sessao_ml)
         layout_exp.addWidget(self.btn_iniciar_ia)
 
+        # PAINEL DE MONITORAMENTO (PESQUISADOR)
         group_mon = QGroupBox("Monitoramento BCI (Pesquisador)")
         layout_mon = QVBoxLayout()
         self.lbl_fase = QLabel("FASE: Parado")
@@ -861,8 +894,9 @@ class JanelaInicial(QMainWindow):
         layout_exp.addStretch(); self.tabs_controles.addTab(self.tab_experimento, "Sessão & IA")
         self.layout_left.addWidget(self.tabs_controles)
 
+    # Função Matemática para Re-referenciamento Espacial
     def aplicar_rereferenciamento(self, matriz_dados, canais_selecionados, tipo_ref):
-        if tipo_ref == 0: return matriz_dados 
+        if tipo_ref == 0: return matriz_dados # Nenhuma
         
         matriz_ref = matriz_dados.copy()
         canais_upper = [c.strip().upper() for c in canais_selecionados]
@@ -878,13 +912,12 @@ class JanelaInicial(QMainWindow):
             else:
                 print("⚠️ Aviso: C3 ou C4 não encontrados. Re-referenciamento ignorado.")
                 
-        elif tipo_ref == 3: 
+        elif tipo_ref == 3: # CAR
             sinal_referencia = np.mean(matriz_dados, axis=1)
             matriz_ref = matriz_dados - sinal_referencia[:, np.newaxis]
 
         return matriz_ref
 
-    # === NOVA FUNÇÃO TXT BLINDADA ===
     def carregar_labels_txt(self, file_manual=True):
         if file_manual:
             fname, _ = QFileDialog.getOpenFileName(self, "Carregar Arquivo de Montagem", "", "Arquivos de Texto (*.txt)")
@@ -898,39 +931,19 @@ class JanelaInicial(QMainWindow):
                 
         if not self.aquisicao.channels: return
 
-        self.canais_base = [f"CH {i}" for i in range(128)]
-        for label, idx in self.aquisicao.channels.items():
-            if idx < 128:
-                self.canais_base[idx] = label
-                
-        self.canais = self.canais_base[:self.n_channels]
-        if hasattr(self, 'ch_texts'):
-            for i, txt in enumerate(self.ch_texts):
-                if i < self.n_channels:
-                    txt.set_text(self.canais[i])
-                    
-        if file_manual: 
-            self.chk_usar_txt.blockSignals(True)
-            self.chk_usar_txt.setChecked(True)
-            self.chk_usar_txt.blockSignals(False)
-            QMessageBox.information(self, "Sucesso", "Mapa de Eletrodos carregado!\nA quantidade de canais na SpinBox NÃO foi alterada.")
-  
-    # === FUNÇÃO QUE LIGA/DESLIGA OS NOMES ===
-    def toggle_uso_txt(self, state):
-        if state != QtCore.Qt.Checked:
-            if hasattr(self, 'aquisicao') and self.aquisicao:
-                self.aquisicao.channels = {} 
-                
-            self.canais_base = [f"CH {i}" for i in range(128)]
-            self.canais = self.canais_base[:self.n_channels]
+        max_idx = max(self.aquisicao.channels.values()) 
+        total_canais = max_idx + 1
+        
+        while len(self.canais_base) < total_canais:
+            self.canais_base.append(f"CH {len(self.canais_base)+1}")
             
-            if hasattr(self, 'ch_texts'):
-                for i, txt in enumerate(self.ch_texts):
-                    if i < self.n_channels:
-                        txt.set_text(self.canais[i])
-        else:
-            self.carregar_labels_txt(file_manual=False)
-
+        for label, idx in self.aquisicao.channels.items():
+            self.canais_base[idx] = label
+                
+        self.spin_shape_ch.setValue(total_canais)
+        self.mudar_numero_canais(total_canais)
+        if file_manual: QMessageBox.information(self, "Sucesso", f"Montagem carregada com {total_canais} canais.")
+  
     def abrir_selecao_canais_ia(self):
         canais_atuais = self.canais_base[:self.n_channels]
         dialogo = DialogoSelecaoCanaisIA(canais_atuais, self.canais_ia)
@@ -984,12 +997,6 @@ class JanelaInicial(QMainWindow):
         if hasattr(self, 'aquisicao') and self.aquisicao:
             self.aquisicao.num_canais = self.n_channels
             self.aquisicao.current_data = np.zeros((self.len_data, self.n_channels))
-            
-            # === A CORREÇÃO DE MEMÓRIA DA FFT ENTRA AQUI ===
-            # Avisa o motor de frequência que o número de canais aumentou!
-            self.aquisicao.fft_buffer_history = np.zeros((self.n_channels, self.aquisicao.xlim_FFT))
-            self.aquisicao.fft_data = np.zeros((self.aquisicao.xlim_FFT, self.n_channels))
-            # ===============================================
 
     def add_class_ui(self, txt):
         idx = len(self.lista_lineedits)
@@ -1078,23 +1085,13 @@ class JanelaInicial(QMainWindow):
             self.aplicar_varredura_visual(chunk)
             if self.paradigma_win is None or not self.paradigma_win.isVisible(): self.atualizar_graficos_visuais()
         elif self.radio_csv.isChecked(): pass 
-        elif self.radio_placa.isChecked():
+        elif self.radio_lsl.isChecked():
             if not getattr(self.aquisicao, 'conectado', False): return 
-            
-            try:
-                chunk = self.aquisicao.adquirir()
-                
-                # RADAR DIAGNÓSTICO
-                if chunk is None or len(chunk) == 0:
-                    pass
-                else:
-                    if chunk is not None and len(chunk) > 0:
-                        chunk_np = np.array(chunk)[:, :self.n_channels]
-                        self.aplicar_varredura_visual(chunk_np)
-                        if self.paradigma_win is None or not self.paradigma_win.isVisible(): 
-                            self.atualizar_graficos_visuais()
-            except Exception as e:
-                print(f"[ERRO NO GRÁFICO] {e}")
+            chunk = self.aquisicao.adquirir()
+            if chunk is not None and len(chunk) > 0:
+                chunk_np = np.array(chunk)[:, :self.n_channels]
+                self.aplicar_varredura_visual(chunk_np)
+                if self.paradigma_win is None or not self.paradigma_win.isVisible(): self.atualizar_graficos_visuais()
 
     def atualizar_dados_offline(self):
         fs_atual = self.spin_fs.value()
@@ -1126,14 +1123,10 @@ class JanelaInicial(QMainWindow):
                         self.spin_escala_visual.blockSignals(False)
                         self.escala_visual = int(amp * 0.8)
                         self.atualizar_limites_temporal()
-                        
                 x = np.arange(self.x_size)
                 for i, l in enumerate(self.lines_time):
                     if i >= self.n_channels: break 
-                    
-                    # === GRÁFICO INVERTIDO (IGUAL AO CURRY) ===
-                    off = (self.n_channels - 1 - i) * self.escala_visual * 1.4
-                    
+                    off = i * self.escala_visual * 1.4
                     recorte_y = self.current_data_visual[:, i]
                     media = np.nanmean(recorte_y) if not np.all(np.isnan(recorte_y)) else 0
                     y = recorte_y - media
@@ -1156,14 +1149,8 @@ class JanelaInicial(QMainWindow):
         return [le.text().strip() if le.text().strip() else f"Classe {i}" for i, le in enumerate(self.lista_lineedits)]
 
     def limpar_historico_trial(self):
-        # Esta função é chamada toda vez que a seta aparece na tela (Início do Trial)
         self.trial_predicts_log = []
-        
-        # === GRAVADORES DA MÉTRICA DE DESEMPENHO ===
-        self.gravador_trial_preds = []
-        self.gravador_trial_probs = []
-        
-        self.telemetry.update_telemetry([], [], [], 0)
+        self.telemetry.update_telemetry([], [], [])
 
     def abrir_gravacao_paradigma(self):
         nomes = self.obter_nomes_classes()
@@ -1184,7 +1171,7 @@ class JanelaInicial(QMainWindow):
             if QMessageBox.question(self, "Aviso", "Unity desligado. Continuar?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.No: return
         if not self.model or not self.worker_ia:
             if QMessageBox.question(self, "Aviso", "Nenhum modelo IA carregado. Simular predições?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.No: return
-        if self.radio_placa.isChecked() and not getattr(self.aquisicao, 'conectado', False): return QMessageBox.warning(self, "Aviso", "LSL ativo mas placa não conectada.")
+        if self.radio_lsl.isChecked() and not getattr(self.aquisicao, 'conectado', False): return QMessageBox.warning(self, "Aviso", "LSL ativo mas placa não conectada.")
 
         self.dados_guardados = []; self.marcacoes = []; self.buffer_dados_treino = []; self.buffer_labels_treino = []
         self.ocorreu_transfer_learning = False
@@ -1199,6 +1186,7 @@ class JanelaInicial(QMainWindow):
         self.timer_largada.start(100)
 
     def checar_largada(self):
+        # A IA quer 'X' pontos, mas o LSL pode estar gerando noutra taxa. Vamos conferir quantos pontos físicos esperar.
         fs_eq = self.spin_fs.value()
         fs_ia = self.spin_fs_modelo.value()
         pts_ia = self.spin_shape_time.value()
@@ -1216,26 +1204,37 @@ class JanelaInicial(QMainWindow):
             self.paradigma_win.iniciar_paradigma()
 
     def processar_epoca_ia(self, label_real, is_training=False):
+        # 1. Ajuste Dinâmico de Pontos (Resampling pre-check)
         fs_equip = self.spin_fs.value()
         fs_ia = self.spin_fs_modelo.value()
         pts_ia = self.spin_shape_time.value()
+        
         pts_reais = int(pts_ia * (fs_equip / fs_ia)) if fs_equip != fs_ia else pts_ia
         
         dados_brutos = self.aquisicao.pegar_canais_especificos(self.canais_ia)[-pts_reais:, :]
-        if dados_brutos.shape[0] < pts_reais: return 
+        if dados_brutos.shape[0] < pts_reais: return # Buffer ainda enchendo
         
+        # 2. Re-Referenciamento Espacial
         tipo_ref = self.combo_referencia.currentIndex()
         dados_ref = self.aplicar_rereferenciamento(dados_brutos, self.canais_ia, tipo_ref)
         
+        # 3. Resampling (Efeito Sanfona)
         if fs_equip != fs_ia:
             dados_processados = resample(dados_ref, pts_ia, axis=0)
         else:
             dados_processados = dados_ref
 
-        media = np.mean(dados_processados, axis=0, keepdims=True)
-        std = np.std(dados_processados, axis=0, keepdims=True)
-        dados_norm = (dados_processados - media) / (std + 1e-8)
+        # 4. Trava de Segurança IA
+        ch_esperados = self.model.input_shape[-1] if (self.model and hasattr(self.model, 'input_shape')) else len(self.canais_ia)
+        if dados_processados.shape[1] != ch_esperados: return 
+            
+        # 5. Normalização
+        dados_norm = (dados_processados - dados_processados.min()) / (dados_processados.max() - dados_processados.min() + 1e-8)
         
+        if is_training and self.paradigma_win.fase_atual == "CALIBRACAO":
+            self.buffer_dados_treino.append(dados_norm)
+            self.buffer_labels_treino.append(label_real)
+
         if self.worker_ia and self.worker_ia.rodando:
             self.worker_ia.pedir_predicao(np.array([dados_norm]), is_training, label_real)
         else:
@@ -1251,7 +1250,7 @@ class JanelaInicial(QMainWindow):
 
         self.historico_probs.append(prob)
         if len(self.historico_probs) > 4: self.historico_probs.pop(0)
-# CASO MODIFICAR PESOS MUDA AQUI
+
         pesos_base = [0.05, 0.15, 0.30, 0.50]
         pesos_atuais = pesos_base[-len(self.historico_probs):]
         soma_pesos = sum(pesos_atuais)
@@ -1265,12 +1264,6 @@ class JanelaInicial(QMainWindow):
         max_idx = wma_prob.index(max_val)
         nome_predito = nomes[max_idx].lower() if max_idx < len(nomes) else "indefinido"
         
-        # === O GRAVADOR ESPIONA A PREDIÇÃO ATUAL ===
-        if hasattr(self, 'gravador_trial_preds'):
-            self.gravador_trial_preds.append(max_idx)
-            self.gravador_trial_probs.append(max_val)
-        # ===========================================
-
         comando_movimento = "CENTRO" 
         if max_val >= 0.60:
             if "esquerda" in nome_predito: comando_movimento = "ESQUERDA"
@@ -1279,9 +1272,10 @@ class JanelaInicial(QMainWindow):
         epocas_puladas = self.worker_ia.epocas_puladas if self.worker_ia else 0
         self.telemetry.update_telemetry(self.trial_predicts_log, wma_prob, nomes, epocas_puladas)
 
-        # O CUBO CONTINUA SE MOVENDO EM TEMPO REAL
         if self.paradigma_win and self.paradigma_win.isVisible() and self.paradigma_win.widget_feedback:
             if isinstance(self.paradigma_win.widget_feedback, CubeFeedbackWidget):
+                # A velocidade do cubo agora escala com a confiança (max_val),
+                # em vez de ser sempre a mesma independente de quão certa a IA está.
                 self.paradigma_win.widget_feedback.set_decision(comando_movimento, confianca=max_val)
             elif isinstance(self.paradigma_win.widget_feedback, GaugeWidget):
                 p0 = wma_prob[0] if len(wma_prob) > 0 else 0.0
@@ -1304,48 +1298,12 @@ class JanelaInicial(QMainWindow):
             elif "direita" in nome_predito: self.unity.send("HAND_RIGHT")
             else: self.unity.send("HAND_REST")
 
-# === O CÁLCULO DA MÉTRICA NO FINAL DO TRIAL ===
-        if is_training:
-            if hasattr(self, 'gravador_trial_preds') and len(self.gravador_trial_preds) > 0:
-                # 1. Matemática do Desempenho
-                acertos = self.gravador_trial_preds.count(label_real)
-                total_janelas = len(self.gravador_trial_preds)
-                taxa_acerto = (acertos / total_janelas) * 100.0
-                confianca_media = (sum(self.gravador_trial_probs) / len(self.gravador_trial_probs)) * 100.0
-                
-                nome_alvo = nomes[label_real].upper()
-                
-                # 2. Descobre o que a IA REALMENTE previu na maioria do tempo
-                # Conta qual índice apareceu mais vezes no gravador
-                classe_mais_votada_idx = max(set(self.gravador_trial_preds), key=self.gravador_trial_preds.count)
-                nome_mais_votado = nomes[classe_mais_votada_idx].upper()
-                
-                # 3. Definição do Limiar Científico com Diagnóstico de Erro
-                if taxa_acerto >= 50.0:
-                    status = "✅ ACERTO"
-                    cor = Tema.OK
-                else:
-                    # Se errou, mostra o que ela "achou" que era
-                    status = f"❌ ERRO (Previu: {nome_mais_votado})"
-                    cor = Tema.ERRO
-                    
-                # 4. Cria a mensagem final
-                num_trial = len(self.marcacoes) + 1
-                msg = f"Trial {num_trial} [Alvo: {nome_alvo}] -> {status} | Dominância: {taxa_acerto:.0f}% | Confiança: {confianca_media:.0f}%"
-                
-                # Imprime no painel da GUI
-                self.telemetry.log_trial(msg, cor)
-                
-                # IMPRIME NO TERMINAL (TELA PRETA) COMO SOLICITADO
-                print(f"[RESULTADO TRIAL] {msg}")
-
-            # Salva os dados na memória
-            if self.salvar_dados:
-                new_chunk = self.aquisicao.len_data if len(self.dados_guardados) == 0 else self.aquisicao.new_len
-                self.marcacoes.append([len(self.dados_guardados), len(self.dados_guardados) + new_chunk, max_idx, label_real])
-                self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data - new_chunk:, :].tolist()
-            
+        if is_training and self.salvar_dados:
+            new_chunk = self.aquisicao.len_data if len(self.dados_guardados) == 0 else self.aquisicao.new_len
+            self.marcacoes.append([len(self.dados_guardados), len(self.dados_guardados) + new_chunk, max_idx, label_real])
+            self.dados_guardados += self.aquisicao.current_data.copy()[self.aquisicao.len_data - new_chunk:, :].tolist()
             self.historico_probs = []
+
     def iniciar_pausa_tecnica(self):
         self.lbl_fase.setText("A TREINAR MODELO (PAUSA TÉCNICA)...")
         self.lbl_fase.setStyleSheet(estilo_status(Tema.ALERTA))
@@ -1367,7 +1325,6 @@ class JanelaInicial(QMainWindow):
 
     def finalizar_sessao(self):
         if hasattr(self, 'timer_atualizacao_offline'): self.timer_atualizacao_offline.stop()
-        self.worker_ia.treinar_com_dados()
         self.lbl_fase.setText("SESSÃO CONCLUÍDA")
         self.btn_iniciar_ia.setEnabled(True)
         self.btn_iniciar_ia.setText("▶ PASSO 2: INICIAR SESSÃO")
@@ -1396,49 +1353,26 @@ class JanelaInicial(QMainWindow):
             self.lbl_unity.setStyleSheet(estilo_status(Tema.OK))
         except Exception: pass
 
-    # === CONEXÃO BLINDADA (LSL/UDP/TCP) ===
-    def conectar_placa(self):
-        protocolo_escolhido = self.combo_protocolo.currentText()
-        self.lbl_placa.setText(f'A procurar {protocolo_escolhido}...')
-        self.lbl_placa.setStyleSheet(estilo_status(Tema.ALERTA))
+    def conectar_LSL(self):
+        self.lbl_lsl.setText('A procurar...')
+        self.lbl_lsl.setStyleSheet(estilo_status(Tema.ALERTA))
         QApplication.processEvents()
         
-        self.aquisicao = Aquisicao(
-            len_data=self.len_data, 
-            num_canais=self.spin_shape_ch.value(), 
-            xlim_FFT=self.x_size//2, 
-            smooth_factor=self.fft_smooth_factor,
-            protocolo=protocolo_escolhido
-        )
-        
-        # 1. CONEXÃO PRIMEIRO (Deixa o LSL conectar e tentar puxar os nomes)
+        self.aquisicao = Aquisicao(len_data=self.len_data, num_canais=self.spin_shape_ch.value(), xlim_FFT=self.x_size//2, smooth_factor=self.fft_smooth_factor)
+        self.carregar_labels_txt(file_manual=False) 
         self.aquisicao.conectar()
         
         if self.aquisicao.conectado:
-            self.lbl_placa.setText(f'{protocolo_escolhido} Ligado!')
-            self.lbl_placa.setStyleSheet(estilo_status(Tema.OK))
-            self.radio_placa.setChecked(True)
-            
-            # 2. QUEM MANDA NOS NOMES DA TELA?
-            if self.chk_usar_txt.isChecked():
-                # Se a caixinha estiver marcada, o seu .txt sobrepõe o LSL e trava a tela!
-                self.carregar_labels_txt(file_manual=False) 
-            else:
-                # Se a caixinha estiver desmarcada, usamos o que veio da placa
-                if self.aquisicao.channels:
-                    self.canais_base = [f"CH {i}" for i in range(128)]
-                    for label, idx in self.aquisicao.channels.items():
-                        if idx < 128:
-                            self.canais_base[idx] = label
-                            
-                    self.canais = self.canais_base[:self.n_channels]
-                    if hasattr(self, 'ch_texts'):
-                        for i, txt in enumerate(self.ch_texts):
-                            if i < self.n_channels:
-                                txt.set_text(self.canais[i])
+            self.inlet = self.aquisicao.inlet
+            self.lbl_lsl.setText('Ligado!')
+            self.lbl_lsl.setStyleSheet(estilo_status(Tema.OK))
+            self.radio_lsl.setChecked(True)
+            if hasattr(self.aquisicao, 'num_canais') and self.aquisicao.num_canais != self.n_channels:
+                self.spin_shape_ch.setValue(self.aquisicao.num_canais)
         else:
-            self.lbl_placa.setText(f'Falha {protocolo_escolhido}')
-            self.lbl_placa.setStyleSheet(estilo_status(Tema.ERRO))
+            self.lbl_lsl.setText('Falha LSL')
+            self.lbl_lsl.setStyleSheet(estilo_status(Tema.ERRO))
+
     def abrir_modelo(self):
         fname, _ = QFileDialog.getOpenFileName(self, 'Abrir Ficheiro IA', '../', "Model files (*.h5)")
         if fname:
@@ -1544,7 +1478,10 @@ class DialogoFimSessao(QDialog):
                     
                 if 0 <= int(label_real) < num_outputs:
                     if int(end_idx) >= pts_reais:
+                        # Extrai do log bruto
                         epoch_bruta_full = np.array(self.hub.dados_guardados[int(end_idx) - pts_reais : int(end_idx)])
+                        
+                        # Isola apenas os canais que a IA precisa
                         indices_ia = []
                         canais_limpos = {str(k).strip().upper(): v for k, v in self.hub.aquisicao.channels.items()}
                         for i in self.hub.canais_ia:
@@ -1552,6 +1489,8 @@ class DialogoFimSessao(QDialog):
                         
                         if indices_ia:
                             epoch_bruta = epoch_bruta_full[:, indices_ia]
+                            
+                            # Refaz os mesmos passos que a IA viu para salvar idêntico!
                             tipo_ref = self.hub.combo_referencia.currentIndex()
                             epoch_ref = self.hub.aplicar_rereferenciamento(epoch_bruta, self.hub.canais_ia, tipo_ref)
                             epoch_resampled = resample(epoch_ref, target_time, axis=0) if fs_equip != fs_ia else epoch_ref
@@ -1563,10 +1502,18 @@ class DialogoFimSessao(QDialog):
                 pasta_classe = os.path.join(caminho_completo, f"output_{nome_classe}")
                 if not os.path.exists(pasta_classe): os.makedirs(pasta_classe)
                 
-                cabecalho_canais = ", ".join(self.hub.canais_ia)
+                cabecalho_canais = ", ".join(self.hub.canais_base)
                 for j, epoch in enumerate(dados_separados[i]):
                     ep_norm = (epoch - epoch.min()) / (epoch.max() - epoch.min() + 1e-8)
                     np.savetxt(os.path.join(pasta_classe, f"epoch_{j}.txt"), ep_norm, header=cabecalho_canais, comments='')
+                with open(os.path.join(pasta_classe, "info.txt"), "w") as f:
+                    f.write(f"Classe: {nome_classe}\n")
+                    f.write(f"Descrição: {self.hub.combo_descricao.currentText()}\n")
+                    f.write(f"Número de Épocas: {len(dados_separados[i])}\n")
+                    f.write(f"Shape de cada Época: {target_time} x {len(self.hub.canais_ia)}\n")
+                    f.write(f"Tempo de aviso entre estímulos: {self.hub.paradigma_win.spin_aviso.value()} s\n")
+                    f.write(f"Tempo de ação: {self.hub.paradigma_win.spin_acao.value()} s\n")
+                    f.write(f"Tempo de repouso entre estímulos: {self.hub.paradigma_win.spin_repouso.value()} s\n")
         else:
             fname = os.path.join(caminho_completo, f"{paciente}_EEG_Agrupado.txt")
             with open(fname, "w") as f:
